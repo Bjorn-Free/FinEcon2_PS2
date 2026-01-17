@@ -5,26 +5,724 @@ date: "2026-01-17"
 output: html_document
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+
+## Step 0: Global knit options and a clean session
+
+This chunk sets consistent R Markdown behavior and wipes the workspace so every run starts from a clean slate.
+
+```{r}
+
+# Knit behavior (controls how code + outputs appear in the rendered document)
+
+knitr::opts_chunk$set(
+echo    = TRUE,   # show code in the knitted output
+warning = TRUE,   # keep warnings visible while developing
+message = TRUE    # show messages (e.g., package startup); can switch to FALSE later
+)
+
+# Start from a clean workspace
+
+rm(list = ls())     # remove all objects in the Global Environment
+gc()                # garbage collection: frees memory
+
+# Reproducibility / print settings
+
+options(stringsAsFactors = FALSE)  # consistent behavior across R versions
+options(scipen = 999)              # reduce scientific notation in printed numbers
+set.seed(123)                      # reproducibility for anything stochastic
+
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+##Step 0.1: Install and load the packages for this project
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+This chunk installs (if needed) and loads the libraries used in PS2 (event study, Bacon–Goodman decomposition, and imputation-style DID).
 
-```{r cars}
-summary(cars)
+```{r}
+
+# Make installs non-interactive and consistent
+
+options(repos = c(CRAN = "[https://cloud.r-project.org](https://cloud.r-project.org)"))
+
+# Package list for this project (based on PS2 requirements)
+
+pkgs <- c(
+
+# Data import and wrangling
+
+"data.table", "dplyr", "tidyr", "readr", "haven",
+"stringr", "janitor", "lubridate",
+
+# Visualization
+
+"ggplot2", "scales",
+
+# Fixed effects, inference, and output
+
+"fixest", "broom", "modelsummary",
+"lmtest", "sandwich", "clubSandwich",
+
+# Difference-in-differences tools
+
+"bacondecomp",      # Goodman–Bacon decomposition
+"did",              # Callaway & Sant’Anna
+"didimputation",    # Borusyak et al. imputation estimator
+
+# Utilities
+
+"here", "rstudioapi"
+)
+
+# Install any packages that are missing
+
+missing_pkgs <- pkgs[!pkgs %in% rownames(installed.packages())]
+
+if (length(missing_pkgs) > 0) {
+install.packages(missing_pkgs, type = "binary")
+}
+
+# Load all packages
+
+invisible(lapply(pkgs, library, character.only = TRUE))
+
+# Quick version check for key econometrics packages
+
+cat("\nKey package versions:\n")
+cat("fixest:        ", as.character(packageVersion("fixest")), "\n")
+cat("bacondecomp:   ", as.character(packageVersion("bacondecomp")), "\n")
+cat("did:           ", as.character(packageVersion("did")), "\n")
+cat("didimputation: ", as.character(packageVersion("didimputation")), "\n")
+
 ```
 
-## Including Plots
 
-You can also embed plots, for example:
+## Step 0.2: Set the project root and define standard folder paths
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+This chunk defines a reliable project root directory and creates/records the key folders used throughout the project so all file paths stay consistent and relative.
+
+```{r}
+
+# Project root and path management (single source of truth)
+
+# Use the active RStudio Project path if available; otherwise fall back to the current working directory
+
+PROJECT_DIR <- NA_character_
+
+if (rstudioapi::isAvailable()) {
+proj <- tryCatch(rstudioapi::getActiveProject(), error = function(e) NA_character_)
+if (!is.na(proj) && nzchar(proj)) PROJECT_DIR <- proj
+}
+
+if (is.na(PROJECT_DIR) || !nzchar(PROJECT_DIR)) {
+PROJECT_DIR <- getwd()
+}
+
+PROJECT_DIR <- normalizePath(PROJECT_DIR, winslash = "/")
+cat("Project directory:\n", PROJECT_DIR, "\n")
+
+# Define standard folders (edit/add as needed later)
+
+DATA_RAW_DIR   <- file.path(PROJECT_DIR, "data_raw")
+DATA_CLEAN_DIR <- file.path(PROJECT_DIR, "data_clean")
+R_DIR          <- file.path(PROJECT_DIR, "R")
+ANALYSIS_DIR   <- file.path(PROJECT_DIR, "analysis")
+OUTPUT_DIR     <- file.path(PROJECT_DIR, "output")
+FIG_DIR        <- file.path(OUTPUT_DIR, "figures")
+TAB_DIR        <- file.path(OUTPUT_DIR, "tables")
+
+# Create folders safely (no warnings if they already exist)
+
+dir.create(DATA_RAW_DIR,   recursive = TRUE, showWarnings = FALSE)
+dir.create(DATA_CLEAN_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(R_DIR,          recursive = TRUE, showWarnings = FALSE)
+dir.create(ANALYSIS_DIR,   recursive = TRUE, showWarnings = FALSE)
+dir.create(FIG_DIR,        recursive = TRUE, showWarnings = FALSE)
+dir.create(TAB_DIR,        recursive = TRUE, showWarnings = FALSE)
+
+# Quick sanity checks: list the main project folders
+
+cat("\nFolder paths:\n")
+cat("DATA_RAW_DIR:   ", DATA_RAW_DIR, "\n")
+cat("DATA_CLEAN_DIR: ", DATA_CLEAN_DIR, "\n")
+cat("R_DIR:          ", R_DIR, "\n")
+cat("ANALYSIS_DIR:   ", ANALYSIS_DIR, "\n")
+cat("OUTPUT_DIR:     ", OUTPUT_DIR, "\n")
+cat("FIG_DIR:        ", FIG_DIR, "\n")
+cat("TAB_DIR:        ", TAB_DIR, "\n")
+
+# Confirm they exist
+
+stopifnot(
+dir.exists(DATA_RAW_DIR),
+dir.exists(DATA_CLEAN_DIR),
+dir.exists(R_DIR),
+dir.exists(ANALYSIS_DIR),
+dir.exists(OUTPUT_DIR),
+dir.exists(FIG_DIR),
+dir.exists(TAB_DIR)
+)
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+## Step 0.3: Git diagnostics and repository status checks
+
+This chunk verifies that Git is installed, confirms the project is a Git repository, and prints key repo info (branch + remotes).
+
+```{r}
+
+# Git diagnostics (confirm Git works and this folder is a repo)
+
+git_version <- tryCatch(system("git --version", intern = TRUE), error = function(e) character(0))
+
+if (length(git_version) == 0) {
+cat("Git status: NOT FOUND\n")
+cat("Fix: Install Git and restart RStudio so Git is available in your PATH.\n\n")
+} else {
+cat("Git status: FOUND\n")
+cat("Git version:\n", paste(git_version, collapse = "\n"), "\n\n", sep = "")
+}
+
+# Check whether we are inside a Git repository
+
+git_toplevel <- tryCatch(system("git rev-parse --show-toplevel", intern = TRUE), error = function(e) character(0))
+
+if (length(git_toplevel) == 0) {
+cat("Repository status: NOT a Git repository (no .git detected)\n")
+cat("If needed, initialize from the project folder in a Terminal:\n")
+cat("  git init\n  git branch -M main\n\n")
+} else {
+cat("Repository status: Git repository detected\n")
+cat("Repo top-level folder:\n", paste(git_toplevel, collapse = "\n"), "\n\n", sep = "")
+
+# Current branch
+
+branch <- tryCatch(system("git branch --show-current", intern = TRUE), error = function(e) character(0))
+if (length(branch) > 0) cat("Current branch: ", branch, "\n\n", sep = "")
+
+# Remote(s)
+
+remotes <- tryCatch(system("git remote -v", intern = TRUE), error = function(e) character(0))
+if (length(remotes) == 0) {
+cat("Remotes: none configured yet\n")
+cat("If you created a GitHub repo, add it like:\n")
+cat("  git remote add origin <YOUR_GITHUB_URL>\n\n")
+} else {
+cat("Remotes:\n", paste(remotes, collapse = "\n"), "\n\n", sep = "")
+}
+
+# Quick status snapshot
+
+status <- tryCatch(system("git status -sb", intern = TRUE), error = function(e) character(0))
+if (length(status) > 0) cat("git status (short):\n", paste(status, collapse = "\n"), "\n", sep = "")
+}
+
+```
+
+
+## Step 0.4: Define key file names and centralize data paths
+
+This chunk defines the main data file names in one place so that all later code refers to these objects rather than hard-coding file paths.
+
+```{r}
+
+# Centralized file names (edit once here, use everywhere else)
+
+# Main dataset (raw and cleaned versions)
+
+MAIN_DATA_RAW   <- file.path(DATA_RAW_DIR,   "main_dataset_raw.csv")
+MAIN_DATA_CLEAN <- file.path(DATA_CLEAN_DIR, "main_dataset_clean.csv")
+
+# Optional: auxiliary files you may add later
+
+FLOOD_DATA_RAW   <- file.path(DATA_RAW_DIR,   "flood_events_raw.csv")
+FLOOD_DATA_CLEAN <- file.path(DATA_CLEAN_DIR, "flood_events_clean.csv")
+
+# Print for sanity check
+
+cat("Key data file paths:\n")
+cat("MAIN_DATA_RAW:   ", MAIN_DATA_RAW, "\n")
+cat("MAIN_DATA_CLEAN: ", MAIN_DATA_CLEAN, "\n")
+cat("FLOOD_DATA_RAW:  ", FLOOD_DATA_RAW, "\n")
+cat("FLOOD_DATA_CLEAN:", FLOOD_DATA_CLEAN, "\n")
+
+# Existence checks (non-fatal for now, since data may not be added yet)
+
+if (!file.exists(MAIN_DATA_RAW)) {
+cat("\nNOTE: MAIN_DATA_RAW does not exist yet (expected if data not added).\n")
+}
+if (!file.exists(FLOOD_DATA_RAW)) {
+cat("NOTE: FLOOD_DATA_RAW does not exist yet (expected if data not added).\n")
+}
+
+```
+
+
+## Step 0.5: Load the raw dataset and run basic sanity checks
+
+This chunk loads the raw Stata dataset and prints basic information (size, variables, structure).
+
+```{r}
+
+# Load the raw PS2 dataset
+
+PS2_DATA_RAW <- file.path(DATA_RAW_DIR, "PS2_data.dta")
+
+cat("Attempting to load data from:\n", PS2_DATA_RAW, "\n")
+
+if (!file.exists(PS2_DATA_RAW)) {
+stop("Data file not found at the specified path. Check DATA_RAW_DIR and filename.")
+}
+
+ps2_raw <- haven::read_dta(PS2_DATA_RAW)
+
+# Basic structure checks
+
+cat("\nDataset loaded successfully.\n")
+cat("Dimensions (rows, columns):\n")
+print(dim(ps2_raw))
+
+cat("\nVariable names:\n")
+print(names(ps2_raw))
+
+cat("\nFirst 10 rows:\n")
+print(head(ps2_raw, 10))
+
+# Quick panel sanity checks
+
+cat("\nUnique communities (id_num): ", length(unique(ps2_raw$id_num)), "\n")
+cat("Unique years: ", length(unique(ps2_raw$year)), "\n")
+
+# Check for duplicate id-year pairs (should generally be none)
+
+dup_check <- ps2_raw %>%
+count(id_num, year) %>%
+filter(n > 1)
+
+if (nrow(dup_check) == 0) {
+cat("\nNo duplicate (id_num, year) pairs found.\n")
+} else {
+cat("\nWARNING: Duplicate (id_num, year) pairs detected:\n")
+print(dup_check)
+}
+
+# Check how hityear is coded
+
+cat("\nSummary of hityear variable:\n")
+print(table(ps2_raw$hityear, useNA = "ifany"))
+
+# Check how many floods per community (should be at most once by assignment design)
+
+floods_per_id <- ps2_raw %>%
+group_by(id_num) %>%
+summarise(total_floods = sum(hityear == 1, na.rm = TRUE))
+
+cat("\nDistribution of number of floods per community:\n")
+print(table(floods_per_id$total_floods))
+
+```
+
+
+## Part b) Event-study estimation around flood timing
+
+Part (b) is completed by constructing event time relative to each community’s flood year, estimating a TWFE event-study regression with fixed effects, and plotting the coefficients with confidence intervals. Interpretation focuses on dynamics before and after the flood and on appropriate clustering choices.
+
+## Step B.1: Create a clean working dataset and confirm basic structure
+
+This chunk creates a working copy of the raw data and enforces consistent variable types needed for the event-time construction and fixed-effects regressions.
+
+```{r}
+
+# Create a working copy (keeps the raw object untouched)
+
+ps2 <- ps2_raw
+
+# Enforce consistent types (fixest prefers clean integer / factor structure)
+
+ps2 <- ps2 %>%
+mutate(
+state       = as.character(state),
+id_num      = as.integer(id_num),
+year        = as.integer(year),
+hityear     = as.integer(hityear),
+ln_policies = as.numeric(ln_policies)
+)
+
+# Basic structure checks (lightweight, intended to fail fast if something is off)
+
+cat("Rows, columns:\n")
+print(dim(ps2))
+
+cat("\nYear range:\n")
+print(range(ps2$year, na.rm = TRUE))
+
+cat("\nUnique communities (id_num):\n")
+print(length(unique(ps2$id_num)))
+
+cat("\nUnique states:\n")
+print(length(unique(ps2$state)))
+
+cat("\nCheck hityear coding (should be 0/1 only):\n")
+print(table(ps2$hityear, useNA = "ifany"))
+
+# Confirm panel uniqueness at the id-year level (should be exactly one observation per pair)
+
+dup_id_year <- ps2 %>%
+count(id_num, year) %>%
+filter(n > 1)
+
+stopifnot(nrow(dup_id_year) == 0)
+
+```
+
+
+## Step B.2: Construct each community’s flood year and merge it back to the panel
+
+This chunk creates a community-level flood_year (the year with hityear == 1, if any) and merges it back into the full panel dataset.
+
+```{r}
+
+# Construct the flood year for each community (NA for never-flooded communities)
+
+flood_year_by_id <- ps2 %>%
+group_by(id_num) %>%
+summarise(
+flood_year = ifelse(any(hityear == 1, na.rm = TRUE),
+year[which(hityear == 1)[1]],
+NA_integer_),
+.groups = "drop"
+)
+
+# Merge back to the main panel
+
+ps2 <- ps2 %>%
+left_join(flood_year_by_id, by = "id_num")
+
+# Sanity checks
+
+cat("Communities with a flood year:\n")
+print(sum(!is.na(ps2$flood_year)) / length(ps2$flood_year))  # share at observation level (not id-level)
+
+cat("\nUnique flood years (treated communities only):\n")
+print(sort(unique(ps2$flood_year[!is.na(ps2$flood_year)])))
+
+# Check floods-per-community is still at most one (assignment design)
+
+floods_per_id <- ps2 %>%
+group_by(id_num) %>%
+summarise(total_floods = sum(hityear == 1, na.rm = TRUE), .groups = "drop")
+
+cat("\nDistribution of floods per community (should be 0 or 1 only):\n")
+print(table(floods_per_id$total_floods, useNA = "ifany"))
+
+stopifnot(all(floods_per_id$total_floods %in% c(0, 1)))
+
+```
+
+
+## Step B.3: Construct treatment status and relative event time
+
+This chunk creates a treated indicator and the relative year variable𝑟= year − flood_year for treated communities, plus quick checks of the resulting event-time support.
+
+```{r}
+
+# Treated indicator and relative event time
+
+ps2 <- ps2 %>%
+mutate(
+treated  = as.integer(!is.na(flood_year)),
+rel_year = ifelse(treated == 1, year - flood_year, NA_integer_)
+)
+
+# Sanity checks at the community level (not observation level)
+
+treated_share_ids <- ps2 %>%
+distinct(id_num, flood_year) %>%
+summarise(treated_share = mean(!is.na(flood_year))) %>%
+pull(treated_share)
+
+cat("Share of communities treated (should be 3092 / 7019):\n")
+print(treated_share_ids)
+
+cat("\nCheck treated indicator (observation-level counts):\n")
+print(table(ps2$treated, useNA = "ifany"))
+
+# Relative year support for treated observations only
+
+cat("\nRelative year summary (treated observations only):\n")
+print(summary(ps2$rel_year[ps2$treated == 1]))
+
+cat("\nRelative year frequency (treated observations only; first few):\n")
+print(head(sort(table(ps2$rel_year[ps2$treated == 1])), 15))
+
+```
+
+
+## Step b.4: Choose event window and bin/cap relative time
+
+This chunk defines the event-study window, bins extreme leads and lags, and creates a factor variable with the correct reference period (r = −1). 
+
+```{r}
+
+# Choose event-study window
+
+LOWER <- -6
+UPPER <-  6
+
+ps2 <- ps2 %>%
+mutate(
+rel_year_bin = case_when(
+treated == 0              ~ NA_integer_,   # never-treated: no event time
+rel_year <= LOWER         ~ LOWER,          # bin lower tail
+rel_year >= UPPER         ~ UPPER,          # bin upper tail
+TRUE                      ~ rel_year
+)
+)
+
+# Check distribution after binning (treated only)
+
+cat("Relative year (binned) distribution, treated observations only:\n")
+print(sort(table(ps2$rel_year_bin[ps2$treated == 1]), decreasing = TRUE))
+
+# Create ordered factor for regression and plotting
+
+event_levels <- sort(unique(ps2$rel_year_bin[ps2$treated == 1]))
+ps2$rel_year_f <- factor(ps2$rel_year_bin, levels = event_levels)
+
+# Set reference period: r = -1
+
+ps2$rel_year_f <- relevel(ps2$rel_year_f, ref = "-1")
+
+cat("\nEvent-time factor levels (in order):\n")
+print(levels(ps2$rel_year_f))
+
+# Sanity check: confirm -1 is the reference
+
+cat("\nReference level:\n")
+print(levels(ps2$rel_year_f)[1] == "-1")
+
+```
+
+
+## Step B.5: Estimate the event-study regression (Gallagher-style)
+
+This chunk runs the TWFE event-study regression with:
+  - Outcome: ln_policies
+  - Event-time indicators: rel_year_f
+  - Fixed effects: community FE and state-by-year FE
+  - Clustering: by state (to match Gallagher)
+
+```{r}
+
+# Event-study regression: Gallagher-style specification
+
+es_gallagher <- fixest::feols(
+ln_policies ~ i(rel_year_f, treated, ref = "-1") |
+id_num + state^year,
+data    = ps2,
+cluster = ~ state
+)
+
+# Print regression summary (focus on event-time coefficients)
+
+summary(es_gallagher)
+
+# Extract only the event-time coefficients for inspection
+
+es_coefs <- broom::tidy(es_gallagher) %>%
+filter(grepl("rel_year_f", term))
+
+cat("\nEvent-time coefficients (relative to r = -1):\n")
+print(es_coefs)
+
+```
+
+
+## Step B.6: Build and save the event-study plot
+
+This chunk extracts the event-time coefficients from the regression, constructs confidence intervals, and plots the dynamic treatment effects relative to the year before the flood.
+
+```{r}
+
+# Tidy event-time coefficients from the Gallagher-style regression
+
+es_plot_data <- broom::tidy(es_gallagher) %>%
+filter(grepl("rel_year_f", term)) %>%
+mutate(
+rel_year = as.integer(gsub("rel_year_f::|:treated", "", term)),
+ci_low   = estimate - 1.96 * std.error,
+ci_high  = estimate + 1.96 * std.error
+) %>%
+arrange(rel_year)
+
+# Print for a quick check
+
+cat("Event-study plotting data:\n")
+print(es_plot_data)
+
+# Build the event-study plot (serif = Times New Roman on Windows)
+
+es_plot <- ggplot(es_plot_data, aes(x = rel_year, y = estimate)) +
+geom_hline(yintercept = 0, linetype = "dashed") +
+geom_point() +
+geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
+labs(
+x = "Years relative to flood",
+y = "Effect on log policies (relative to year before flood)",
+title = "Event Study: Flood and Insurance Take-Up"
+) +
+theme_minimal(base_family = "serif") +
+theme(
+plot.title = element_text(face = "bold"),
+axis.title = element_text(face = "bold")
+)
+
+# Display the plot
+
+print(es_plot)
+
+# Save the plot
+
+plot_file <- file.path(FIG_DIR, "event_study_gallagher_style_serif.png")
+ggsave(plot_file, es_plot, width = 7, height = 5, dpi = 300)
+
+cat("Event-study figure saved to:\n", plot_file, "\n")
+
+```
+## Part b) i) Interpretation of the Event-Study Results
+
+Figure B.6 shows the dynamic effect of a flood on log flood‐insurance take-up, normalized to zero in the year before the flood. Pre-treatment coefficients are generally small and statistically indistinguishable from zero, indicating little evidence of strong differential pre-trends once community fixed effects and state-by-year fixed effects are included. One lead (three years before the flood) is slightly negative and marginally significant, but there is no consistent pattern of divergence prior to treatment, supporting the identifying assumption that - conditional on fixed effects - the timing of floods is plausibly exogenous.
+
+In contrast, the post-flood response is large and immediate. Insurance take-up rises by about 9 log points (roughly 9 percent) in the flood year and peaks around 12 log points in the following year. The effect then gradually declines but remains positive and statistically significant for several years, before becoming imprecisely estimated by about six years after the flood. This spike-and-decay pattern closely matches the dynamics emphasized in Gallagher: households strongly update beliefs after a recent flood, but the effect fades as the event becomes less salient, consistent with limited memory or overweighting of recent experience rather than full Bayesian learning.
+
+## Part b) ii) Clustering of Standard Errors
+
+Standard errors in the event-study regression are clustered at the state level, following Gallagher (2014). This choice is motivated by the likelihood that shocks affecting flood insurance demand—such as regulatory changes, insurance market conditions, or media coverage—are correlated across communities within the same state over time. Because treatment varies at the community level but key unobservables may be correlated at higher geographic levels, failing to account for this intra-state correlation would understate uncertainty and lead to over-rejection. Given that the specification also includes state-by-year fixed effects, clustering at the state level is a natural and coherent choice: it allows for arbitrary serial and cross-sectional correlation in the error term within states, while still exploiting within-state variation in flood timing across communities for identification.
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
+## 
+
+```{r}
+
+
+
+```
+
+
