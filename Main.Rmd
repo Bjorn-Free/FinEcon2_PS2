@@ -1357,11 +1357,35 @@ library(knitr)
 library(kableExtra)
 library(dplyr)
 
-# Build a clean numeric table first (safe column names)
+# --- Ensure required objects exist (helps when knitting) ---
+if (!exists("att_hand")) {
+  stop("Object 'att_hand' not found. Run Step E.1 (hand ATT regression) before this table chunk.")
+}
+if (!exists("att_pkg")) {
+  stop("Object 'att_pkg' not found. Run Step E.2 (did_imputation) before this table chunk.")
+}
+
+# --- Extract estimates and standard errors ---
+# Hand (naive) ATT and SE from the regression in Step E.1
+hand_est <- as.numeric(coef(att_hand)["treated_it"])
+hand_se  <- as.numeric(se(att_hand)["treated_it"])
+
+# Package ATT and SE from the tibble returned by did_imputation in Step E.2
+pkg_est <- as.numeric(att_pkg$estimate[att_pkg$term == "treat"])
+pkg_se  <- as.numeric(att_pkg$std.error[att_pkg$term == "treat"])
+
+# Sanity check: confirm extraction worked
+cat("Extracted values:\n")
+print(data.frame(
+  hand_est = hand_est, hand_se = hand_se,
+  pkg_est  = pkg_est,  pkg_se  = pkg_se
+))
+
+# --- Build a clean numeric table first (safe column names) ---
 att_tbl <- data.frame(
-  Method    = c("Hand imputation (naive SE)", "did_imputation (correct SE)"),
-  ATT       = c(as.numeric(hand_est), as.numeric(pkg_est)),
-  Std_Error = c(as.numeric(hand_se),  as.numeric(pkg_se)),
+  Method    = c("Hand imputation (naive SE)", "`did_imputation` (correct SE)"),
+  ATT       = c(hand_est, pkg_est),
+  Std_Error = c(hand_se,  pkg_se),
   check.names = FALSE
 )
 
@@ -1394,7 +1418,7 @@ kable(
     latex_options = c("hold_position")
   ) %>%
   row_spec(0, bold = TRUE) %>%
-  row_spec(which(att_tbl$Method == "did_imputation (correct SE)"), bold = TRUE) %>%
+  row_spec(which(att_tbl$Method == "`did_imputation` (correct SE)"), bold = TRUE) %>%
   column_spec(1, width = "7cm") %>%
   kable_classic(full_width = FALSE, html_font = "Times New Roman")
 
@@ -1405,67 +1429,3 @@ kable(
 Table Z reports the average treatment effect on the treated (ATT) estimated using both the hand implementation of the imputation estimator and the did_imputation package. Both methods produce the same point estimate (ATT = 0.0917), which confirms that they implement the same imputation logic: untreated outcomes are first estimated using only untreated observations, and treatment effects are then constructed as tau_hat_it = Y_it − Y0_hat_it. This equivalence of point estimates is exactly what is predicted by the imputation framework of Borusyak et al. (2024) and by the exposition in Roth et al. (2023).
 
 The difference appears in the standard errors. The hand implementation reports a smaller standard error (0.0134) because it treats the imputed components as known and ignores uncertainty from the first-stage estimation. The did_imputation package reports a larger standard error (0.0144) because it accounts for the imputation step and the resulting dependence structure, as required by Borusyak et al. (2024). Roth et al. (2023) warn that naive second-stage regressions on imputed effects lead to invalid inference, and Baker et al. (2022) emphasize that correcting staggered-adoption bias requires both correct point estimation and correct inference. Therefore, the package-based standard error is the appropriate one for inference.
-
-
-```{r}
-
-
-```
-
-
-
-
-```{r}
-
-
-```
-
-
-
-
-```{r}
-
-
-```
-
-
-
-
-```{r}
-
-
-```
-
-
-
-
-```{r}
-
-
-```
-
-
-
-
-```{r}
-
-
-```
-
-
-
-
-```{r}
-
-
-```
-
-
-
-
-```{r}
-
-
-```
-
-
