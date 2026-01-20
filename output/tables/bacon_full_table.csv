@@ -1,0 +1,7 @@
+"Comparison type","Implied 2x2 estimate","Weight","Contribution"
+"TWFE (overall)",0.121101574052183,NA,0.121101574052183
+"Treated vs Untreated",0.114732,0.717247,0.082292
+"Earlier vs Later Treated",0.103501,0.164294,0.017005
+"Later vs Earlier Treated",0.210229,0.099828,0.020987
+"Later vs Always Treated",0.043941,0.01863,0.000819
+"Total",NA,0.999999,0.121103

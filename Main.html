@@ -357,31 +357,834 @@ display: none;
 </div>
 
 
-<div id="r-markdown" class="section level2">
-<h2>R Markdown</h2>
-<p>This is an R Markdown document. Markdown is a simple formatting
-syntax for authoring HTML, PDF, and MS Word documents. For more details
-on using R Markdown see <a href="http://rmarkdown.rstudio.com" class="uri">http://rmarkdown.rstudio.com</a>.</p>
-<p>When you click the <strong>Knit</strong> button a document will be
-generated that includes both content as well as the output of any
-embedded R code chunks within the document. You can embed an R code
-chunk like this:</p>
-<pre class="r"><code>summary(cars)</code></pre>
-<pre><code>##      speed           dist       
-##  Min.   : 4.0   Min.   :  2.00  
-##  1st Qu.:12.0   1st Qu.: 26.00  
-##  Median :15.0   Median : 36.00  
-##  Mean   :15.4   Mean   : 42.98  
-##  3rd Qu.:19.0   3rd Qu.: 56.00  
-##  Max.   :25.0   Max.   :120.00</code></pre>
+<div id="step-0-global-knit-options-and-a-clean-session" class="section level2">
+<h2>Step 0: Global knit options and a clean session</h2>
+<p>This chunk sets consistent R Markdown behavior and wipes the
+workspace so every run starts from a clean slate.</p>
+<pre class="r"><code># Knit behavior (controls how code + outputs appear in the rendered document)
+
+knitr::opts_chunk$set(
+echo    = TRUE,   # show code in the knitted output
+warning = TRUE,   # keep warnings visible while developing
+message = TRUE    # show messages (e.g., package startup); can switch to FALSE later
+)
+
+# Start from a clean workspace
+
+rm(list = ls())     # remove all objects in the Global Environment
+gc()                # garbage collection: frees memory</code></pre>
+<pre><code>##           used (Mb) gc trigger (Mb) max used (Mb)
+## Ncells  611633 32.7    1396485 74.6   702074 37.5
+## Vcells 1143915  8.8    8388608 64.0  1927979 14.8</code></pre>
+<pre class="r"><code># Reproducibility / print settings
+
+options(stringsAsFactors = FALSE)  # consistent behavior across R versions
+options(scipen = 999)              # reduce scientific notation in printed numbers
+set.seed(123)                      # reproducibility for anything stochastic</code></pre>
+<p>##Step 0.1: Install and load the packages for this project</p>
+<p>This chunk installs (if needed) and loads the libraries used in PS2
+(event study, Bacon–Goodman decomposition, and imputation-style
+DID).</p>
+<pre class="r"><code># Make installs non-interactive and consistent
+
+options(repos = c(CRAN = &quot;[https://cloud.r-project.org](https://cloud.r-project.org)&quot;))
+
+# Package list for this project (based on PS2 requirements)
+
+pkgs &lt;- c(
+
+# Data import and wrangling
+
+&quot;data.table&quot;, &quot;dplyr&quot;, &quot;tidyr&quot;, &quot;readr&quot;, &quot;haven&quot;,
+&quot;stringr&quot;, &quot;janitor&quot;, &quot;lubridate&quot;,
+
+# Visualization
+
+&quot;ggplot2&quot;, &quot;scales&quot;,
+
+# Fixed effects, inference, and output
+
+&quot;fixest&quot;, &quot;broom&quot;, &quot;modelsummary&quot;,
+&quot;lmtest&quot;, &quot;sandwich&quot;, &quot;clubSandwich&quot;,
+
+# Difference-in-differences tools
+
+&quot;bacondecomp&quot;,      # Goodman–Bacon decomposition
+&quot;did&quot;,              # Callaway &amp; Sant’Anna
+&quot;didimputation&quot;,    # Borusyak et al. imputation estimator
+
+# Utilities
+
+&quot;here&quot;, &quot;rstudioapi&quot;
+)
+
+# Install any packages that are missing
+
+missing_pkgs &lt;- pkgs[!pkgs %in% rownames(installed.packages())]
+
+if (length(missing_pkgs) &gt; 0) {
+install.packages(missing_pkgs, type = &quot;binary&quot;)
+}
+
+# Load all packages
+
+invisible(lapply(pkgs, library, character.only = TRUE))</code></pre>
+<pre><code>## 
+## Attaching package: &#39;dplyr&#39;</code></pre>
+<pre><code>## The following objects are masked from &#39;package:data.table&#39;:
+## 
+##     between, first, last</code></pre>
+<pre><code>## The following objects are masked from &#39;package:stats&#39;:
+## 
+##     filter, lag</code></pre>
+<pre><code>## The following objects are masked from &#39;package:base&#39;:
+## 
+##     intersect, setdiff, setequal, union</code></pre>
+<pre><code>## 
+## Attaching package: &#39;janitor&#39;</code></pre>
+<pre><code>## The following objects are masked from &#39;package:stats&#39;:
+## 
+##     chisq.test, fisher.test</code></pre>
+<pre><code>## 
+## Attaching package: &#39;lubridate&#39;</code></pre>
+<pre><code>## The following objects are masked from &#39;package:data.table&#39;:
+## 
+##     hour, isoweek, mday, minute, month, quarter, second, wday, week,
+##     yday, year</code></pre>
+<pre><code>## The following objects are masked from &#39;package:base&#39;:
+## 
+##     date, intersect, setdiff, union</code></pre>
+<pre><code>## 
+## Attaching package: &#39;scales&#39;</code></pre>
+<pre><code>## The following object is masked from &#39;package:readr&#39;:
+## 
+##     col_factor</code></pre>
+<pre><code>## 
+## Attaching package: &#39;fixest&#39;</code></pre>
+<pre><code>## The following object is masked from &#39;package:scales&#39;:
+## 
+##     pvalue</code></pre>
+<pre><code>## Loading required package: zoo</code></pre>
+<pre><code>## 
+## Attaching package: &#39;zoo&#39;</code></pre>
+<pre><code>## The following objects are masked from &#39;package:data.table&#39;:
+## 
+##     yearmon, yearqtr</code></pre>
+<pre><code>## The following objects are masked from &#39;package:base&#39;:
+## 
+##     as.Date, as.Date.numeric</code></pre>
+<pre><code>## Registered S3 method overwritten by &#39;clubSandwich&#39;:
+##   method    from    
+##   bread.mlm sandwich</code></pre>
+<pre><code>## here() starts at C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2</code></pre>
+<pre class="r"><code># Quick version check for key econometrics packages
+
+cat(&quot;\nKey package versions:\n&quot;)</code></pre>
+<pre><code>## 
+## Key package versions:</code></pre>
+<pre class="r"><code>cat(&quot;fixest:        &quot;, as.character(packageVersion(&quot;fixest&quot;)), &quot;\n&quot;)</code></pre>
+<pre><code>## fixest:         0.13.2</code></pre>
+<pre class="r"><code>cat(&quot;bacondecomp:   &quot;, as.character(packageVersion(&quot;bacondecomp&quot;)), &quot;\n&quot;)</code></pre>
+<pre><code>## bacondecomp:    0.1.1</code></pre>
+<pre class="r"><code>cat(&quot;did:           &quot;, as.character(packageVersion(&quot;did&quot;)), &quot;\n&quot;)</code></pre>
+<pre><code>## did:            2.3.0</code></pre>
+<pre class="r"><code>cat(&quot;didimputation: &quot;, as.character(packageVersion(&quot;didimputation&quot;)), &quot;\n&quot;)</code></pre>
+<pre><code>## didimputation:  0.3.0</code></pre>
 </div>
-<div id="including-plots" class="section level2">
-<h2>Including Plots</h2>
-<p>You can also embed plots, for example:</p>
-<p><img role="img" src="data:image/png;base64,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" width="672" /></p>
-<p>Note that the <code>echo = FALSE</code> parameter was added to the
-code chunk to prevent printing of the R code that generated the
-plot.</p>
+<div id="step-0.2-set-the-project-root-and-define-standard-folder-paths" class="section level2">
+<h2>Step 0.2: Set the project root and define standard folder paths</h2>
+<p>This chunk defines a reliable project root directory and
+creates/records the key folders used throughout the project so all file
+paths stay consistent and relative.</p>
+<pre class="r"><code># Project root and path management (single source of truth)
+
+# Use the active RStudio Project path if available; otherwise fall back to the current working directory
+
+PROJECT_DIR &lt;- NA_character_
+
+if (rstudioapi::isAvailable()) {
+proj &lt;- tryCatch(rstudioapi::getActiveProject(), error = function(e) NA_character_)
+if (!is.na(proj) &amp;&amp; nzchar(proj)) PROJECT_DIR &lt;- proj
+}
+
+if (is.na(PROJECT_DIR) || !nzchar(PROJECT_DIR)) {
+PROJECT_DIR &lt;- getwd()
+}
+
+PROJECT_DIR &lt;- normalizePath(PROJECT_DIR, winslash = &quot;/&quot;)
+cat(&quot;Project directory:\n&quot;, PROJECT_DIR, &quot;\n&quot;)</code></pre>
+<pre><code>## Project directory:
+##  C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2</code></pre>
+<pre class="r"><code># Define standard folders (edit/add as needed later)
+
+DATA_RAW_DIR   &lt;- file.path(PROJECT_DIR, &quot;data_raw&quot;)
+DATA_CLEAN_DIR &lt;- file.path(PROJECT_DIR, &quot;data_clean&quot;)
+R_DIR          &lt;- file.path(PROJECT_DIR, &quot;R&quot;)
+ANALYSIS_DIR   &lt;- file.path(PROJECT_DIR, &quot;analysis&quot;)
+OUTPUT_DIR     &lt;- file.path(PROJECT_DIR, &quot;output&quot;)
+FIG_DIR        &lt;- file.path(OUTPUT_DIR, &quot;figures&quot;)
+TAB_DIR        &lt;- file.path(OUTPUT_DIR, &quot;tables&quot;)
+
+# Create folders safely (no warnings if they already exist)
+
+dir.create(DATA_RAW_DIR,   recursive = TRUE, showWarnings = FALSE)
+dir.create(DATA_CLEAN_DIR, recursive = TRUE, showWarnings = FALSE)
+dir.create(R_DIR,          recursive = TRUE, showWarnings = FALSE)
+dir.create(ANALYSIS_DIR,   recursive = TRUE, showWarnings = FALSE)
+dir.create(FIG_DIR,        recursive = TRUE, showWarnings = FALSE)
+dir.create(TAB_DIR,        recursive = TRUE, showWarnings = FALSE)
+
+# Quick sanity checks: list the main project folders
+
+cat(&quot;\nFolder paths:\n&quot;)</code></pre>
+<pre><code>## 
+## Folder paths:</code></pre>
+<pre class="r"><code>cat(&quot;DATA_RAW_DIR:   &quot;, DATA_RAW_DIR, &quot;\n&quot;)</code></pre>
+<pre><code>## DATA_RAW_DIR:    C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/data_raw</code></pre>
+<pre class="r"><code>cat(&quot;DATA_CLEAN_DIR: &quot;, DATA_CLEAN_DIR, &quot;\n&quot;)</code></pre>
+<pre><code>## DATA_CLEAN_DIR:  C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/data_clean</code></pre>
+<pre class="r"><code>cat(&quot;R_DIR:          &quot;, R_DIR, &quot;\n&quot;)</code></pre>
+<pre><code>## R_DIR:           C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/R</code></pre>
+<pre class="r"><code>cat(&quot;ANALYSIS_DIR:   &quot;, ANALYSIS_DIR, &quot;\n&quot;)</code></pre>
+<pre><code>## ANALYSIS_DIR:    C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/analysis</code></pre>
+<pre class="r"><code>cat(&quot;OUTPUT_DIR:     &quot;, OUTPUT_DIR, &quot;\n&quot;)</code></pre>
+<pre><code>## OUTPUT_DIR:      C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/output</code></pre>
+<pre class="r"><code>cat(&quot;FIG_DIR:        &quot;, FIG_DIR, &quot;\n&quot;)</code></pre>
+<pre><code>## FIG_DIR:         C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/output/figures</code></pre>
+<pre class="r"><code>cat(&quot;TAB_DIR:        &quot;, TAB_DIR, &quot;\n&quot;)</code></pre>
+<pre><code>## TAB_DIR:         C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/output/tables</code></pre>
+<pre class="r"><code># Confirm they exist
+
+stopifnot(
+dir.exists(DATA_RAW_DIR),
+dir.exists(DATA_CLEAN_DIR),
+dir.exists(R_DIR),
+dir.exists(ANALYSIS_DIR),
+dir.exists(OUTPUT_DIR),
+dir.exists(FIG_DIR),
+dir.exists(TAB_DIR)
+)</code></pre>
+</div>
+<div id="step-0.3-git-diagnostics-and-repository-status-checks" class="section level2">
+<h2>Step 0.3: Git diagnostics and repository status checks</h2>
+<p>This chunk verifies that Git is installed, confirms the project is a
+Git repository, and prints key repo info (branch + remotes).</p>
+<pre class="r"><code># Git diagnostics (confirm Git works and this folder is a repo)
+
+git_version &lt;- tryCatch(system(&quot;git --version&quot;, intern = TRUE), error = function(e) character(0))
+
+if (length(git_version) == 0) {
+cat(&quot;Git status: NOT FOUND\n&quot;)
+cat(&quot;Fix: Install Git and restart RStudio so Git is available in your PATH.\n\n&quot;)
+} else {
+cat(&quot;Git status: FOUND\n&quot;)
+cat(&quot;Git version:\n&quot;, paste(git_version, collapse = &quot;\n&quot;), &quot;\n\n&quot;, sep = &quot;&quot;)
+}</code></pre>
+<pre><code>## Git status: FOUND
+## Git version:
+## git version 2.52.0.windows.1</code></pre>
+<pre class="r"><code># Check whether we are inside a Git repository
+
+git_toplevel &lt;- tryCatch(system(&quot;git rev-parse --show-toplevel&quot;, intern = TRUE), error = function(e) character(0))
+
+if (length(git_toplevel) == 0) {
+cat(&quot;Repository status: NOT a Git repository (no .git detected)\n&quot;)
+cat(&quot;If needed, initialize from the project folder in a Terminal:\n&quot;)
+cat(&quot;  git init\n  git branch -M main\n\n&quot;)
+} else {
+cat(&quot;Repository status: Git repository detected\n&quot;)
+cat(&quot;Repo top-level folder:\n&quot;, paste(git_toplevel, collapse = &quot;\n&quot;), &quot;\n\n&quot;, sep = &quot;&quot;)
+
+# Current branch
+
+branch &lt;- tryCatch(system(&quot;git branch --show-current&quot;, intern = TRUE), error = function(e) character(0))
+if (length(branch) &gt; 0) cat(&quot;Current branch: &quot;, branch, &quot;\n\n&quot;, sep = &quot;&quot;)
+
+# Remote(s)
+
+remotes &lt;- tryCatch(system(&quot;git remote -v&quot;, intern = TRUE), error = function(e) character(0))
+if (length(remotes) == 0) {
+cat(&quot;Remotes: none configured yet\n&quot;)
+cat(&quot;If you created a GitHub repo, add it like:\n&quot;)
+cat(&quot;  git remote add origin &lt;YOUR_GITHUB_URL&gt;\n\n&quot;)
+} else {
+cat(&quot;Remotes:\n&quot;, paste(remotes, collapse = &quot;\n&quot;), &quot;\n\n&quot;, sep = &quot;&quot;)
+}
+
+# Quick status snapshot
+
+status &lt;- tryCatch(system(&quot;git status -sb&quot;, intern = TRUE), error = function(e) character(0))
+if (length(status) &gt; 0) cat(&quot;git status (short):\n&quot;, paste(status, collapse = &quot;\n&quot;), &quot;\n&quot;, sep = &quot;&quot;)
+}</code></pre>
+<pre><code>## Repository status: Git repository detected
+## Repo top-level folder:
+## C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2
+## 
+## Current branch: main
+## 
+## Remotes:
+## origin   https://github.com/Bjorn-Free/FinEcon2_PS2 (fetch)
+## origin   https://github.com/Bjorn-Free/FinEcon2_PS2 (push)
+## 
+## git status (short):
+## ## main...origin/main
+##  M Main.Rmd</code></pre>
+</div>
+<div id="step-0.4-define-key-file-names-and-centralize-data-paths" class="section level2">
+<h2>Step 0.4: Define key file names and centralize data paths</h2>
+<p>This chunk defines the main data file names in one place so that all
+later code refers to these objects rather than hard-coding file
+paths.</p>
+<pre class="r"><code># Centralized file names (edit once here, use everywhere else)
+
+# Main dataset (raw and cleaned versions)
+
+MAIN_DATA_RAW   &lt;- file.path(DATA_RAW_DIR,   &quot;main_dataset_raw.csv&quot;)
+MAIN_DATA_CLEAN &lt;- file.path(DATA_CLEAN_DIR, &quot;main_dataset_clean.csv&quot;)
+
+# Optional: auxiliary files you may add later
+
+FLOOD_DATA_RAW   &lt;- file.path(DATA_RAW_DIR,   &quot;flood_events_raw.csv&quot;)
+FLOOD_DATA_CLEAN &lt;- file.path(DATA_CLEAN_DIR, &quot;flood_events_clean.csv&quot;)
+
+# Print for sanity check
+
+cat(&quot;Key data file paths:\n&quot;)</code></pre>
+<pre><code>## Key data file paths:</code></pre>
+<pre class="r"><code>cat(&quot;MAIN_DATA_RAW:   &quot;, MAIN_DATA_RAW, &quot;\n&quot;)</code></pre>
+<pre><code>## MAIN_DATA_RAW:    C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/data_raw/main_dataset_raw.csv</code></pre>
+<pre class="r"><code>cat(&quot;MAIN_DATA_CLEAN: &quot;, MAIN_DATA_CLEAN, &quot;\n&quot;)</code></pre>
+<pre><code>## MAIN_DATA_CLEAN:  C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/data_clean/main_dataset_clean.csv</code></pre>
+<pre class="r"><code>cat(&quot;FLOOD_DATA_RAW:  &quot;, FLOOD_DATA_RAW, &quot;\n&quot;)</code></pre>
+<pre><code>## FLOOD_DATA_RAW:   C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/data_raw/flood_events_raw.csv</code></pre>
+<pre class="r"><code>cat(&quot;FLOOD_DATA_CLEAN:&quot;, FLOOD_DATA_CLEAN, &quot;\n&quot;)</code></pre>
+<pre><code>## FLOOD_DATA_CLEAN: C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/data_clean/flood_events_clean.csv</code></pre>
+<pre class="r"><code># Existence checks (non-fatal for now, since data may not be added yet)
+
+if (!file.exists(MAIN_DATA_RAW)) {
+cat(&quot;\nNOTE: MAIN_DATA_RAW does not exist yet (expected if data not added).\n&quot;)
+}</code></pre>
+<pre><code>## 
+## NOTE: MAIN_DATA_RAW does not exist yet (expected if data not added).</code></pre>
+<pre class="r"><code>if (!file.exists(FLOOD_DATA_RAW)) {
+cat(&quot;NOTE: FLOOD_DATA_RAW does not exist yet (expected if data not added).\n&quot;)
+}</code></pre>
+<pre><code>## NOTE: FLOOD_DATA_RAW does not exist yet (expected if data not added).</code></pre>
+</div>
+<div id="step-0.5-load-the-raw-dataset-and-run-basic-sanity-checks" class="section level2">
+<h2>Step 0.5: Load the raw dataset and run basic sanity checks</h2>
+<p>This chunk loads the raw Stata dataset and prints basic information
+(size, variables, structure).</p>
+<pre class="r"><code># Load the raw PS2 dataset
+
+PS2_DATA_RAW &lt;- file.path(DATA_RAW_DIR, &quot;PS2_data.dta&quot;)
+
+cat(&quot;Attempting to load data from:\n&quot;, PS2_DATA_RAW, &quot;\n&quot;)</code></pre>
+<pre><code>## Attempting to load data from:
+##  C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/data_raw/PS2_data.dta</code></pre>
+<pre class="r"><code>if (!file.exists(PS2_DATA_RAW)) {
+stop(&quot;Data file not found at the specified path. Check DATA_RAW_DIR and filename.&quot;)
+}
+
+ps2_raw &lt;- haven::read_dta(PS2_DATA_RAW)
+
+# Basic structure checks
+
+cat(&quot;\nDataset loaded successfully.\n&quot;)</code></pre>
+<pre><code>## 
+## Dataset loaded successfully.</code></pre>
+<pre class="r"><code>cat(&quot;Dimensions (rows, columns):\n&quot;)</code></pre>
+<pre><code>## Dimensions (rows, columns):</code></pre>
+<pre class="r"><code>print(dim(ps2_raw))</code></pre>
+<pre><code>## [1] 126342      5</code></pre>
+<pre class="r"><code>cat(&quot;\nVariable names:\n&quot;)</code></pre>
+<pre><code>## 
+## Variable names:</code></pre>
+<pre class="r"><code>print(names(ps2_raw))</code></pre>
+<pre><code>## [1] &quot;state&quot;       &quot;id_num&quot;      &quot;year&quot;        &quot;hityear&quot;     &quot;ln_policies&quot;</code></pre>
+<pre class="r"><code>cat(&quot;\nFirst 10 rows:\n&quot;)</code></pre>
+<pre><code>## 
+## First 10 rows:</code></pre>
+<pre class="r"><code>print(head(ps2_raw, 10))</code></pre>
+<pre><code>## # A tibble: 10 × 5
+##    state   id_num  year hityear ln_policies
+##    &lt;chr&gt;    &lt;dbl&gt; &lt;dbl&gt;   &lt;dbl&gt;       &lt;dbl&gt;
+##  1 ALABAMA  10010  1990       0       -5.65
+##  2 ALABAMA  10010  1991       0       -5.68
+##  3 ALABAMA  10010  1992       0       -5.71
+##  4 ALABAMA  10010  1993       0       -5.73
+##  5 ALABAMA  10010  1994       0       -5.73
+##  6 ALABAMA  10010  1995       0       -5.73
+##  7 ALABAMA  10010  1996       0       -5.04
+##  8 ALABAMA  10010  1997       0       -5.05
+##  9 ALABAMA  10010  1998       0       -5.06
+## 10 ALABAMA  10010  1999       0       -5.05</code></pre>
+<pre class="r"><code># Quick panel sanity checks
+
+cat(&quot;\nUnique communities (id_num): &quot;, length(unique(ps2_raw$id_num)), &quot;\n&quot;)</code></pre>
+<pre><code>## 
+## Unique communities (id_num):  7019</code></pre>
+<pre class="r"><code>cat(&quot;Unique years: &quot;, length(unique(ps2_raw$year)), &quot;\n&quot;)</code></pre>
+<pre><code>## Unique years:  18</code></pre>
+<pre class="r"><code># Check for duplicate id-year pairs (should generally be none)
+
+dup_check &lt;- ps2_raw %&gt;%
+count(id_num, year) %&gt;%
+filter(n &gt; 1)
+
+if (nrow(dup_check) == 0) {
+cat(&quot;\nNo duplicate (id_num, year) pairs found.\n&quot;)
+} else {
+cat(&quot;\nWARNING: Duplicate (id_num, year) pairs detected:\n&quot;)
+print(dup_check)
+}</code></pre>
+<pre><code>## 
+## No duplicate (id_num, year) pairs found.</code></pre>
+<pre class="r"><code># Check how hityear is coded
+
+cat(&quot;\nSummary of hityear variable:\n&quot;)</code></pre>
+<pre><code>## 
+## Summary of hityear variable:</code></pre>
+<pre class="r"><code>print(table(ps2_raw$hityear, useNA = &quot;ifany&quot;))</code></pre>
+<pre><code>## 
+##      0      1 
+## 123250   3092</code></pre>
+<pre class="r"><code># Check how many floods per community (should be at most once by assignment design)
+
+floods_per_id &lt;- ps2_raw %&gt;%
+group_by(id_num) %&gt;%
+summarise(total_floods = sum(hityear == 1, na.rm = TRUE))
+
+cat(&quot;\nDistribution of number of floods per community:\n&quot;)</code></pre>
+<pre><code>## 
+## Distribution of number of floods per community:</code></pre>
+<pre class="r"><code>print(table(floods_per_id$total_floods))</code></pre>
+<pre><code>## 
+##    0    1 
+## 3927 3092</code></pre>
+</div>
+<div id="part-b-event-study-estimation-around-flood-timing" class="section level2">
+<h2>Part b) Event-study estimation around flood timing</h2>
+<p>Part (b) is completed by constructing event time relative to each
+community’s flood year, estimating a TWFE event-study regression with
+fixed effects, and plotting the coefficients with confidence intervals.
+Interpretation focuses on dynamics before and after the flood and on
+appropriate clustering choices.</p>
+</div>
+<div id="step-b.1-create-a-clean-working-dataset-and-confirm-basic-structure" class="section level2">
+<h2>Step B.1: Create a clean working dataset and confirm basic
+structure</h2>
+<p>This chunk creates a working copy of the raw data and enforces
+consistent variable types needed for the event-time construction and
+fixed-effects regressions.</p>
+<pre class="r"><code># Create a working copy (keeps the raw object untouched)
+
+ps2 &lt;- ps2_raw
+
+# Enforce consistent types (fixest prefers clean integer / factor structure)
+
+ps2 &lt;- ps2 %&gt;%
+mutate(
+state       = as.character(state),
+id_num      = as.integer(id_num),
+year        = as.integer(year),
+hityear     = as.integer(hityear),
+ln_policies = as.numeric(ln_policies)
+)
+
+# Basic structure checks (lightweight, intended to fail fast if something is off)
+
+cat(&quot;Rows, columns:\n&quot;)</code></pre>
+<pre><code>## Rows, columns:</code></pre>
+<pre class="r"><code>print(dim(ps2))</code></pre>
+<pre><code>## [1] 126342      5</code></pre>
+<pre class="r"><code>cat(&quot;\nYear range:\n&quot;)</code></pre>
+<pre><code>## 
+## Year range:</code></pre>
+<pre class="r"><code>print(range(ps2$year, na.rm = TRUE))</code></pre>
+<pre><code>## [1] 1990 2007</code></pre>
+<pre class="r"><code>cat(&quot;\nUnique communities (id_num):\n&quot;)</code></pre>
+<pre><code>## 
+## Unique communities (id_num):</code></pre>
+<pre class="r"><code>print(length(unique(ps2$id_num)))</code></pre>
+<pre><code>## [1] 7019</code></pre>
+<pre class="r"><code>cat(&quot;\nUnique states:\n&quot;)</code></pre>
+<pre><code>## 
+## Unique states:</code></pre>
+<pre class="r"><code>print(length(unique(ps2$state)))</code></pre>
+<pre><code>## [1] 48</code></pre>
+<pre class="r"><code>cat(&quot;\nCheck hityear coding (should be 0/1 only):\n&quot;)</code></pre>
+<pre><code>## 
+## Check hityear coding (should be 0/1 only):</code></pre>
+<pre class="r"><code>print(table(ps2$hityear, useNA = &quot;ifany&quot;))</code></pre>
+<pre><code>## 
+##      0      1 
+## 123250   3092</code></pre>
+<pre class="r"><code># Confirm panel uniqueness at the id-year level (should be exactly one observation per pair)
+
+dup_id_year &lt;- ps2 %&gt;%
+count(id_num, year) %&gt;%
+filter(n &gt; 1)
+
+stopifnot(nrow(dup_id_year) == 0)</code></pre>
+</div>
+<div id="step-b.2-construct-each-communitys-flood-year-and-merge-it-back-to-the-panel" class="section level2">
+<h2>Step B.2: Construct each community’s flood year and merge it back to
+the panel</h2>
+<p>This chunk creates a community-level flood_year (the year with
+hityear == 1, if any) and merges it back into the full panel
+dataset.</p>
+<pre class="r"><code># Construct the flood year for each community (NA for never-flooded communities)
+
+flood_year_by_id &lt;- ps2 %&gt;%
+group_by(id_num) %&gt;%
+summarise(
+flood_year = ifelse(any(hityear == 1, na.rm = TRUE),
+year[which(hityear == 1)[1]],
+NA_integer_),
+.groups = &quot;drop&quot;
+)
+
+# Merge back to the main panel
+
+ps2 &lt;- ps2 %&gt;%
+left_join(flood_year_by_id, by = &quot;id_num&quot;)
+
+# Sanity checks
+
+cat(&quot;Communities with a flood year:\n&quot;)</code></pre>
+<pre><code>## Communities with a flood year:</code></pre>
+<pre class="r"><code>print(sum(!is.na(ps2$flood_year)) / length(ps2$flood_year))  # share at observation level (not id-level)</code></pre>
+<pre><code>## [1] 0.4405186</code></pre>
+<pre class="r"><code>cat(&quot;\nUnique flood years (treated communities only):\n&quot;)</code></pre>
+<pre><code>## 
+## Unique flood years (treated communities only):</code></pre>
+<pre class="r"><code>print(sort(unique(ps2$flood_year[!is.na(ps2$flood_year)])))</code></pre>
+<pre><code>##  [1] 1990 1991 1992 1993 1994 1995 1996 1997 1998 1999 2000 2001 2002 2003 2004
+## [16] 2005 2006 2007</code></pre>
+<pre class="r"><code># Check floods-per-community is still at most one (assignment design)
+
+floods_per_id &lt;- ps2 %&gt;%
+group_by(id_num) %&gt;%
+summarise(total_floods = sum(hityear == 1, na.rm = TRUE), .groups = &quot;drop&quot;)
+
+cat(&quot;\nDistribution of floods per community (should be 0 or 1 only):\n&quot;)</code></pre>
+<pre><code>## 
+## Distribution of floods per community (should be 0 or 1 only):</code></pre>
+<pre class="r"><code>print(table(floods_per_id$total_floods, useNA = &quot;ifany&quot;))</code></pre>
+<pre><code>## 
+##    0    1 
+## 3927 3092</code></pre>
+<pre class="r"><code>stopifnot(all(floods_per_id$total_floods %in% c(0, 1)))</code></pre>
+</div>
+<div id="step-b.3-construct-treatment-status-and-relative-event-time" class="section level2">
+<h2>Step B.3: Construct treatment status and relative event time</h2>
+<p>This chunk creates a treated indicator and the relative year
+variable𝑟= year − flood_year for treated communities, plus quick checks
+of the resulting event-time support.</p>
+<pre class="r"><code># Treated indicator and relative event time
+
+ps2 &lt;- ps2 %&gt;%
+mutate(
+treated  = as.integer(!is.na(flood_year)),
+rel_year = ifelse(treated == 1, year - flood_year, NA_integer_)
+)
+
+# Sanity checks at the community level (not observation level)
+
+treated_share_ids &lt;- ps2 %&gt;%
+distinct(id_num, flood_year) %&gt;%
+summarise(treated_share = mean(!is.na(flood_year))) %&gt;%
+pull(treated_share)
+
+cat(&quot;Share of communities treated (should be 3092 / 7019):\n&quot;)</code></pre>
+<pre><code>## Share of communities treated (should be 3092 / 7019):</code></pre>
+<pre class="r"><code>print(treated_share_ids)</code></pre>
+<pre><code>## [1] 0.4405186</code></pre>
+<pre class="r"><code>cat(&quot;\nCheck treated indicator (observation-level counts):\n&quot;)</code></pre>
+<pre><code>## 
+## Check treated indicator (observation-level counts):</code></pre>
+<pre class="r"><code>print(table(ps2$treated, useNA = &quot;ifany&quot;))</code></pre>
+<pre><code>## 
+##     0     1 
+## 70686 55656</code></pre>
+<pre class="r"><code># Relative year support for treated observations only
+
+cat(&quot;\nRelative year summary (treated observations only):\n&quot;)</code></pre>
+<pre><code>## 
+## Relative year summary (treated observations only):</code></pre>
+<pre class="r"><code>print(summary(ps2$rel_year[ps2$treated == 1]))</code></pre>
+<pre><code>##    Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+## -17.000  -7.000  -2.000  -1.791   3.000  17.000</code></pre>
+<pre class="r"><code>cat(&quot;\nRelative year frequency (treated observations only; first few):\n&quot;)</code></pre>
+<pre><code>## 
+## Relative year frequency (treated observations only; first few):</code></pre>
+<pre class="r"><code>print(head(sort(table(ps2$rel_year[ps2$treated == 1])), 15))</code></pre>
+<pre><code>## 
+##   17   16   15  -17   14   13  -16   12  -15   11   10    9  -14  -13    8 
+##  102  176  197  441  479  496  600  613  798  921 1151 1193 1264 1368 1401</code></pre>
+</div>
+<div id="step-b.4-choose-event-window-and-bincap-relative-time" class="section level2">
+<h2>Step b.4: Choose event window and bin/cap relative time</h2>
+<p>This chunk defines the event-study window, bins extreme leads and
+lags, and creates a factor variable with the correct reference period (r
+= −1).</p>
+<pre class="r"><code># Choose event-study window
+
+LOWER &lt;- -6
+UPPER &lt;-  6
+
+ps2 &lt;- ps2 %&gt;%
+mutate(
+rel_year_bin = case_when(
+treated == 0              ~ NA_integer_,   # never-treated: no event time
+rel_year &lt;= LOWER         ~ LOWER,          # bin lower tail
+rel_year &gt;= UPPER         ~ UPPER,          # bin upper tail
+TRUE                      ~ rel_year
+)
+)
+
+# Check distribution after binning (treated only)
+
+cat(&quot;Relative year (binned) distribution, treated observations only:\n&quot;)</code></pre>
+<pre><code>## Relative year (binned) distribution, treated observations only:</code></pre>
+<pre class="r"><code>print(sort(table(ps2$rel_year_bin[ps2$treated == 1]), decreasing = TRUE))</code></pre>
+<pre><code>## 
+##    -6     6     0    -1    -2    -3     1    -4    -5     2     3     4     5 
+## 17810  9755  3092  2990  2916  2895  2651  2613  2596  2492  2294  1828  1724</code></pre>
+<pre class="r"><code># Create ordered factor for regression and plotting
+
+event_levels &lt;- sort(unique(ps2$rel_year_bin[ps2$treated == 1]))
+ps2$rel_year_f &lt;- factor(ps2$rel_year_bin, levels = event_levels)
+
+# Set reference period: r = -1
+
+ps2$rel_year_f &lt;- relevel(ps2$rel_year_f, ref = &quot;-1&quot;)
+
+cat(&quot;\nEvent-time factor levels (in order):\n&quot;)</code></pre>
+<pre><code>## 
+## Event-time factor levels (in order):</code></pre>
+<pre class="r"><code>print(levels(ps2$rel_year_f))</code></pre>
+<pre><code>##  [1] &quot;-1&quot; &quot;-6&quot; &quot;-5&quot; &quot;-4&quot; &quot;-3&quot; &quot;-2&quot; &quot;0&quot;  &quot;1&quot;  &quot;2&quot;  &quot;3&quot;  &quot;4&quot;  &quot;5&quot;  &quot;6&quot;</code></pre>
+<pre class="r"><code># Sanity check: confirm -1 is the reference
+
+cat(&quot;\nReference level:\n&quot;)</code></pre>
+<pre><code>## 
+## Reference level:</code></pre>
+<pre class="r"><code>print(levels(ps2$rel_year_f)[1] == &quot;-1&quot;)</code></pre>
+<pre><code>## [1] TRUE</code></pre>
+</div>
+<div id="step-b.5-estimate-the-event-study-regression-gallagher-style" class="section level2">
+<h2>Step B.5: Estimate the event-study regression (Gallagher-style)</h2>
+<p>This chunk runs the TWFE event-study regression with: - Outcome:
+ln_policies - Event-time indicators: rel_year_f - Fixed effects:
+community FE and state-by-year FE - Clustering: by state (to match
+Gallagher)</p>
+<pre class="r"><code># Event-study regression: Gallagher-style specification
+
+es_gallagher &lt;- fixest::feols(
+ln_policies ~ i(rel_year_f, treated, ref = &quot;-1&quot;) |
+id_num + state^year,
+data    = ps2,
+cluster = ~ state
+)</code></pre>
+<pre><code>## NOTES: 70,686 observations removed because of NA values (RHS: 70,686).
+##        0/54 fixed-effect singletons were removed (54 observations).</code></pre>
+<pre class="r"><code># Print regression summary (focus on event-time coefficients)
+
+summary(es_gallagher)</code></pre>
+<pre><code>## OLS estimation, Dep. Var.: ln_policies
+## Observations: 55,602
+## Fixed-effects: id_num: 3,089,  state^year: 810
+## Standard-errors: Clustered (state) 
+##                         Estimate Std. Error   t value      Pr(&gt;|t|)    
+## rel_year_f::-6:treated -0.015372   0.029318 -0.524329 0.60268123156    
+## rel_year_f::-5:treated -0.008112   0.023856 -0.340016 0.73546255731    
+## rel_year_f::-4:treated -0.014813   0.017983 -0.823702 0.41455151468    
+## rel_year_f::-3:treated -0.027331   0.013132 -2.081174 0.04326982470 *  
+## rel_year_f::-2:treated -0.002720   0.007847 -0.346636 0.73051703442    
+## rel_year_f::0:treated   0.090033   0.015331  5.872636 0.00000051914 ***
+## rel_year_f::1:treated   0.118927   0.021876  5.436443 0.00000225493 ***
+## rel_year_f::2:treated   0.100025   0.027314  3.662093 0.00066784575 ***
+## rel_year_f::3:treated   0.094445   0.031224  3.024726 0.00414410036 ** 
+## rel_year_f::4:treated   0.095251   0.031590  3.015270 0.00425236373 ** 
+## rel_year_f::5:treated   0.086066   0.039780  2.163558 0.03597021639 *  
+## rel_year_f::6:treated   0.064034   0.051858  1.234799 0.22345882459    
+## ---
+## Signif. codes:  0 &#39;***&#39; 0.001 &#39;**&#39; 0.01 &#39;*&#39; 0.05 &#39;.&#39; 0.1 &#39; &#39; 1
+## RMSE: 0.402949     Adj. R2: 0.938938
+##                  Within R2: 0.004584</code></pre>
+<pre class="r"><code># Extract only the event-time coefficients for inspection
+
+es_coefs &lt;- broom::tidy(es_gallagher) %&gt;%
+filter(grepl(&quot;rel_year_f&quot;, term))
+
+cat(&quot;\nEvent-time coefficients (relative to r = -1):\n&quot;)</code></pre>
+<pre><code>## 
+## Event-time coefficients (relative to r = -1):</code></pre>
+<pre class="r"><code>print(es_coefs)</code></pre>
+<pre><code>## # A tibble: 12 × 5
+##    term                   estimate std.error statistic     p.value
+##    &lt;chr&gt;                     &lt;dbl&gt;     &lt;dbl&gt;     &lt;dbl&gt;       &lt;dbl&gt;
+##  1 rel_year_f::-6:treated -0.0154    0.0293     -0.524 0.603      
+##  2 rel_year_f::-5:treated -0.00811   0.0239     -0.340 0.735      
+##  3 rel_year_f::-4:treated -0.0148    0.0180     -0.824 0.415      
+##  4 rel_year_f::-3:treated -0.0273    0.0131     -2.08  0.0433     
+##  5 rel_year_f::-2:treated -0.00272   0.00785    -0.347 0.731      
+##  6 rel_year_f::0:treated   0.0900    0.0153      5.87  0.000000519
+##  7 rel_year_f::1:treated   0.119     0.0219      5.44  0.00000225 
+##  8 rel_year_f::2:treated   0.100     0.0273      3.66  0.000668   
+##  9 rel_year_f::3:treated   0.0944    0.0312      3.02  0.00414    
+## 10 rel_year_f::4:treated   0.0953    0.0316      3.02  0.00425    
+## 11 rel_year_f::5:treated   0.0861    0.0398      2.16  0.0360     
+## 12 rel_year_f::6:treated   0.0640    0.0519      1.23  0.223</code></pre>
+</div>
+<div id="step-b.6-build-and-save-the-event-study-plot" class="section level2">
+<h2>Step B.6: Build and save the event-study plot</h2>
+<p>This chunk extracts the event-time coefficients from the regression,
+constructs confidence intervals, and plots the dynamic treatment effects
+relative to the year before the flood.</p>
+<pre class="r"><code># Tidy event-time coefficients from the Gallagher-style regression
+
+es_plot_data &lt;- broom::tidy(es_gallagher) %&gt;%
+filter(grepl(&quot;rel_year_f&quot;, term)) %&gt;%
+mutate(
+rel_year = as.integer(gsub(&quot;rel_year_f::|:treated&quot;, &quot;&quot;, term)),
+ci_low   = estimate - 1.96 * std.error,
+ci_high  = estimate + 1.96 * std.error
+) %&gt;%
+arrange(rel_year)
+
+# Print for a quick check
+
+cat(&quot;Event-study plotting data:\n&quot;)</code></pre>
+<pre><code>## Event-study plotting data:</code></pre>
+<pre class="r"><code>print(es_plot_data)</code></pre>
+<pre><code>## # A tibble: 12 × 8
+##    term          estimate std.error statistic p.value rel_year   ci_low  ci_high
+##    &lt;chr&gt;            &lt;dbl&gt;     &lt;dbl&gt;     &lt;dbl&gt;   &lt;dbl&gt;    &lt;int&gt;    &lt;dbl&gt;    &lt;dbl&gt;
+##  1 rel_year_f::… -0.0154    0.0293     -0.524 6.03e-1       -6 -0.0728   0.0421 
+##  2 rel_year_f::… -0.00811   0.0239     -0.340 7.35e-1       -5 -0.0549   0.0386 
+##  3 rel_year_f::… -0.0148    0.0180     -0.824 4.15e-1       -4 -0.0501   0.0204 
+##  4 rel_year_f::… -0.0273    0.0131     -2.08  4.33e-2       -3 -0.0531  -0.00159
+##  5 rel_year_f::… -0.00272   0.00785    -0.347 7.31e-1       -2 -0.0181   0.0127 
+##  6 rel_year_f::…  0.0900    0.0153      5.87  5.19e-7        0  0.0600   0.120  
+##  7 rel_year_f::…  0.119     0.0219      5.44  2.25e-6        1  0.0761   0.162  
+##  8 rel_year_f::…  0.100     0.0273      3.66  6.68e-4        2  0.0465   0.154  
+##  9 rel_year_f::…  0.0944    0.0312      3.02  4.14e-3        3  0.0332   0.156  
+## 10 rel_year_f::…  0.0953    0.0316      3.02  4.25e-3        4  0.0333   0.157  
+## 11 rel_year_f::…  0.0861    0.0398      2.16  3.60e-2        5  0.00810  0.164  
+## 12 rel_year_f::…  0.0640    0.0519      1.23  2.23e-1        6 -0.0376   0.166</code></pre>
+<pre class="r"><code># Build the event-study plot (serif = Times New Roman on Windows)
+
+es_plot &lt;- ggplot(es_plot_data, aes(x = rel_year, y = estimate)) +
+geom_hline(yintercept = 0, linetype = &quot;dashed&quot;) +
+geom_point() +
+geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
+labs(
+x = &quot;Years relative to flood&quot;,
+y = &quot;Effect on log policies (relative to year before flood)&quot;,
+title = &quot;Event Study: Flood and Insurance Take-Up&quot;
+) +
+theme_minimal(base_family = &quot;serif&quot;) +
+theme(
+plot.title = element_text(face = &quot;bold&quot;),
+axis.title = element_text(face = &quot;bold&quot;)
+)
+
+# Display the plot
+
+print(es_plot)</code></pre>
+<p><img role="img" src="data:image/png;base64,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SmtdYYE2DcgVoCScKJxWmj4KPzwSH4bWusICbRqQK0BJOFE4rTR9Hmj2GLTxE5iGtNYVFmjTgFwBSsKJwmmlwSuROq+9k7LTTa5Xvc3FaK0rLNCmAbkClIQThdNKc9fCT564N38R55DWusICbRqQK0BJOFE4rTR9O7vpj5ukta6wQJsG5ApQEk4UTitN384u5fRVC9QCFWBWBckVoCScKJxWGryd3YdHR+lHR4fbfgpvgSowq4LkClASThROK40dRJqcxRTsPKbWusICbRqQK0BJOFE4rTQm0N5u7s9AD0Db6woLtGlArgAl4UThtNLcifS5QUP5s72usECbBuQKUBJOFE4rTV4Lf7gz0OetR1VvcGHa6oplr7NfiraWUi8gV4CScKJwWonobky1eqhGVwwfty81fQksUAXIFaAknCicVkIINMx5oPV6qD5XjF85Xi7OEuNrGrzCcMyqILkClIQThdNK/QLtfbE/xcMrAQRas4dqc8Xk3IUlAy08v565qwzHrAqSK0BJOFE4rdQv0POtZJoAAq3bQxZoBcMxq4LkClASThROKxZoZRtY6tstUAFmVZBcAUrCicJpxQKtbANLfbsFKsCsCpIrQEk4UTitNCHQzq13iux0LVAfRFJgVgXJFaAknCicVhoQ6N3p+ycHuZlIzR6q0RWo3LUOx6wKkitASThROK3Ecx5ovR6q0xWk3LUOx6wKkitASThROK3EI9B6PVSrK0C5ax2OWRUkV4CScKJwWolIoO11hQXaNCBXgJJwonBasUDDDLdABZhVQXIFKAknCqcVCzTMcAtUgFkVJFeAknCicFqxQMMMX2+Bzpz5u9hGMKuC5ApQEk4UTisWaJjhFqgAsypIrgAlm42tBgAAGbVJREFU4UThtGKBhhm+3gJdEcyqILkClIQThdOKBRpmuAUqwKwKkitASThROK2EEKjf1tgClWBWBckVoCScKJxWmhPo2Qc7N4eEuJlIigXa8OxlwawKkitASThROK00JtCT7uSIggVqgSowq4LkClASThROK00JtPCuxhZo3wKVYFYFyRWgJJwonFaaEmjprqAWqAWqwKwKkitASThROK00+Aj09aDvidS3QBufvSyYVUFyBSgJJwqnlcZeAz2YWLP3q+OqN7oQFmjDs5cFsypIrgAl4UThtNKYQM+3NvMP3/YjUAtUgFkVJFeA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" width="672" /></p>
+<pre class="r"><code># Save the plot
+
+plot_file &lt;- file.path(FIG_DIR, &quot;event_study_gallagher_style_serif.png&quot;)
+ggsave(plot_file, es_plot, width = 7, height = 5, dpi = 300)
+
+cat(&quot;Event-study figure saved to:\n&quot;, plot_file, &quot;\n&quot;)</code></pre>
+<pre><code>## Event-study figure saved to:
+##  C:/Users/jivung3/Desktop/FE2_PS2/FinEcon2_PS2/output/figures/event_study_gallagher_style_serif.png</code></pre>
+</div>
+<div id="part-b-i-interpretation-of-the-event-study-results" class="section level2">
+<h2>Part b) i) Interpretation of the Event-Study Results</h2>
+<p>Figure B.6 shows the dynamic effect of a flood on log flood‐insurance
+take-up, normalized to zero in the year before the flood. Pre-treatment
+coefficients are generally small and statistically indistinguishable
+from zero, indicating little evidence of strong differential pre-trends
+once community fixed effects and state-by-year fixed effects are
+included. One lead (three years before the flood) is slightly negative
+and marginally significant, but there is no consistent pattern of
+divergence prior to treatment, supporting the identifying assumption
+that - conditional on fixed effects - the timing of floods is plausibly
+exogenous.</p>
+<p>In contrast, the post-flood response is large and immediate.
+Insurance take-up rises by about 9 log points (roughly 9 percent) in the
+flood year and peaks around 12 log points in the following year. The
+effect then gradually declines but remains positive and statistically
+significant for several years, before becoming imprecisely estimated by
+about six years after the flood. This spike-and-decay pattern closely
+matches the dynamics emphasized in Gallagher: households strongly update
+beliefs after a recent flood, but the effect fades as the event becomes
+less salient, consistent with limited memory or overweighting of recent
+experience rather than full Bayesian learning.</p>
+</div>
+<div id="part-b-ii-clustering-of-standard-errors" class="section level2">
+<h2>Part b) ii) Clustering of Standard Errors</h2>
+<p>Standard errors in the event-study regression are clustered at the
+state level, following Gallagher (2014). This choice is motivated by the
+likelihood that shocks affecting flood insurance demand—such as
+regulatory changes, insurance market conditions, or media coverage—are
+correlated across communities within the same state over time. Because
+treatment varies at the community level but key unobservables may be
+correlated at higher geographic levels, failing to account for this
+intra-state correlation would understate uncertainty and lead to
+over-rejection. Given that the specification also includes state-by-year
+fixed effects, clustering at the state level is a natural and coherent
+choice: it allows for arbitrary serial and cross-sectional correlation
+in the error term within states, while still exploiting within-state
+variation in flood timing across communities for identification.</p>
+</div>
+<div id="section" class="section level2">
+<h2></h2>
+</div>
+<div id="section-1" class="section level2">
+<h2></h2>
+</div>
+<div id="section-2" class="section level2">
+<h2></h2>
+</div>
+<div id="section-3" class="section level2">
+<h2></h2>
+</div>
+<div id="section-4" class="section level2">
+<h2></h2>
+</div>
+<div id="section-5" class="section level2">
+<h2></h2>
+</div>
+<div id="section-6" class="section level2">
+<h2></h2>
+</div>
+<div id="section-7" class="section level2">
+<h2></h2>
+</div>
+<div id="section-8" class="section level2">
+<h2></h2>
+</div>
+<div id="section-9" class="section level2">
+<h2></h2>
+</div>
+<div id="section-10" class="section level2">
+<h2></h2>
+</div>
+<div id="section-11" class="section level2">
+<h2></h2>
+</div>
+<div id="section-12" class="section level2">
+<h2></h2>
+</div>
+<div id="section-13" class="section level2">
+<h2></h2>
 </div>
 
 

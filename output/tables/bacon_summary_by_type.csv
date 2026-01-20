@@ -1,0 +1,5 @@
+"type","total_weight","implied_estimate","total_contribution","share_of_twfe"
+"Treated vs Untreated",0.717247,0.114732,0.082292,0.679525
+"Earlier vs Later Treated",0.164294,0.103501,0.017005,0.140416
+"Later vs Earlier Treated",0.099828,0.210229,0.020987,0.173299
+"Later vs Always Treated",0.01863,0.043941,0.000819,0.00676

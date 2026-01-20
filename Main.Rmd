@@ -36,7 +36,7 @@ set.seed(123)                      # reproducibility for anything stochastic
 
 ##Step 0.1: Install and load the packages for this project
 
-This chunk installs (if needed) and loads the libraries used in PS2 (event study, Bacon–Goodman decomposition, and imputation-style DID).
+This chunk installs (if needed) and loads the libraries used in PS2 (event study, Bacon-Goodman decomposition, and imputation-style DID).
 
 ```{r}
 
@@ -64,7 +64,7 @@ pkgs <- c(
 
 # Difference-in-differences tools
 
-"bacondecomp",      # Goodman–Bacon decomposition
+"bacondecomp",      # Goodman-Bacon decomposition
 "did",              # Callaway & Sant’Anna
 "didimputation",    # Borusyak et al. imputation estimator
 
@@ -589,6 +589,7 @@ ggsave(plot_file, es_plot, width = 7, height = 5, dpi = 300)
 cat("Event-study figure saved to:\n", plot_file, "\n")
 
 ```
+
 ## Part b) i) Interpretation of the Event-Study Results
 
 Figure B.6 shows the dynamic effect of a flood on log flood‐insurance take-up, normalized to zero in the year before the flood. Pre-treatment coefficients are generally small and statistically indistinguishable from zero, indicating little evidence of strong differential pre-trends once community fixed effects and state-by-year fixed effects are included. One lead (three years before the flood) is slightly negative and marginally significant, but there is no consistent pattern of divergence prior to treatment, supporting the identifying assumption that - conditional on fixed effects - the timing of floods is plausibly exogenous.
@@ -599,77 +600,490 @@ In contrast, the post-flood response is large and immediate. Insurance take-up r
 
 Standard errors in the event-study regression are clustered at the state level, following Gallagher (2014). This choice is motivated by the likelihood that shocks affecting flood insurance demand—such as regulatory changes, insurance market conditions, or media coverage—are correlated across communities within the same state over time. Because treatment varies at the community level but key unobservables may be correlated at higher geographic levels, failing to account for this intra-state correlation would understate uncertainty and lead to over-rejection. Given that the specification also includes state-by-year fixed effects, clustering at the state level is a natural and coherent choice: it allows for arbitrary serial and cross-sectional correlation in the error term within states, while still exploiting within-state variation in flood timing across communities for identification.
 
+Because Gallagher emphasizes that beliefs are shaped through shared TV news exposure, shocks to insurance demand are likely correlated within local media markets (DMAs), which often cross state borders. This suggests that state-level clustering may understate uncertainty if media markets are the main channel of information transmission. A more conservative alternative would be to cluster at the media-market level, or to use two-way clustering by state and media market to allow for correlation along both regulatory and information channels.
 
-## 
+## Judgement Calls
+
+Event-time indicators are capped at [−6, +6], with more extreme leads and lags binned into endpoint categories. This follows standard practice in event-study designs and Gallagher (2014), since extreme event times are identified off few observations and produce noisy and unstable estimates. Communities that experience floods near the beginning or end of the sample therefore contribute to the binned endpoint categories rather than being dropped entirely. Communities that never experience a flood are retained in the sample and contribute to the estimation of fixed effects, but do not load on any event-time indicators, so they serve as additional controls in the two-way fixed effects framework.
+
+
+## Part (c): Diagnosing TWFE under staggered treatment using the Goodman-Bacon decomposition
+
+This section evaluates the potential shortcomings of the two-way fixed effects (TWFE) approach in a staggered-adoption setting and quantifies the contribution of different 2×2 comparisons using the Goodman-Bacon decomposition. The workflow proceeds by (i) constructing treatment timing/cohorts and the post-treatment indicator used in TWFE, (ii) estimating the baseline TWFE DiD effect, and (iii) decomposing that estimate into its constituent comparison types to assess the role of “late-to-early” comparisons.
+
+## Step C.1: Construct treatment timing, cohorts, and the TWFE treatment indicator
+
+This chunk constructs each community’s flood year (treatment timing), defines treatment cohorts, and creates the post-treatment indicator used in the TWFE DiD regression and in the Goodman-Bacon decomposition.
 
 ```{r}
 
+# Treatment timing, cohorts, and TWFE treatment indicator (for Part c)
+# Start from the raw panel loaded in Step 0.5
 
+ps2 <- ps2_raw
+
+# Identify the flood year for each treated community (at most one flood per id_num by design)
+
+treat_timing <- ps2 %>%
+filter(hityear == 1) %>%
+select(id_num, year) %>%
+rename(flood_year = year)
+
+# Merge flood_year back into the full panel
+
+ps2_c <- ps2 %>%
+left_join(treat_timing, by = "id_num")
+
+# Construct cohort and post-treatment indicator
+# - cohort_year: flood year for treated units, NA for never-treated units
+# - ever_treated: indicator for ever-treated units (ever flooded)
+# - post: indicator for being in post-treatment periods (including flood year)
+
+ps2_c <- ps2_c %>%
+mutate(
+cohort_year  = flood_year,
+ever_treated = as.integer(!is.na(flood_year)),
+post         = as.integer(ever_treated == 1 & year >= flood_year)
+)
+
+# Sanity checks for timing objects
+
+cat("Cohort / timing checks:\n")
+cat("Total observations:\n"); print(nrow(ps2_c))
+
+cat("\nUnique treated communities:\n")
+print(length(unique(ps2_c$id_num[ps2_c$ever_treated == 1])))
+
+cat("Unique never-treated communities:\n")
+print(length(unique(ps2_c$id_num[ps2_c$ever_treated == 0])))
+
+cat("\nFlood year summary (treated only):\n")
+print(summary(ps2_c$flood_year))
+
+cat("\nCohort counts (treated only):\n")
+print(
+ps2_c %>%
+filter(ever_treated == 1) %>%
+distinct(id_num, cohort_year) %>%
+count(cohort_year) %>%
+arrange(cohort_year)
+)
+
+# Verify post indicator behaves as expected for treated units
+
+cat("\nPost-treatment indicator check (treated units only):\n")
+print(
+ps2_c %>%
+filter(ever_treated == 1) %>%
+summarise(
+min_year   = min(year),
+max_year   = max(year),
+min_post   = min(post, na.rm = TRUE),
+max_post   = max(post, na.rm = TRUE),
+share_post = mean(post, na.rm = TRUE)
+)
+)
 
 ```
 
 
-## 
+## Step C.2: Estimate the baseline TWFE DiD effect
+
+This chunk estimates the standard two-way fixed effects difference-in-differences model using the post-treatment indicator. The resulting coefficient is the single TWFE estimate that will later be diagnosed using the Goodman-Bacon decomposition.
 
 ```{r}
 
+# Baseline TWFE DiD regression
+# TWFE specification:
+# ln_policies_it = beta * post_it + community FE + year FE + error_it
+# Clustering at the state level, consistent with Part (b)
 
+twfe_mod <- feols(
+ln_policies ~ post | id_num + year,
+data = ps2_c,
+cluster = ~state
+)
+
+# Display results
+
+summary(twfe_mod)
+
+# Store coefficient of interest for later comparison
+
+twfe_beta <- coef(twfe_mod)["post"]
+cat("\nTWFE DiD estimate (beta on post):\n")
+print(twfe_beta)
 
 ```
 
 
-## 
+## Step C.3: Goodman-Bacon decomposition of the TWFE estimate
+
+This chunk applies the Goodman-Bacon decomposition to the TWFE DiD estimate in order to decompose it into all underlying 2×2 comparisons (treated vs never-treated, early vs late, and late vs early) and to record the weight and contribution of each comparison type.
 
 ```{r}
 
+## Step C.3: Goodman–Bacon decomposition of the TWFE estimate (bacondecomp)
+# This chunk runs the Goodman–Bacon decomposition of the TWFE regression ln_policies ~ post.
+# The output is saved to disk so the decomposition is computed only once.
 
+library(bacondecomp)
+
+# Minimal, base-R input required by bacondecomp::bacon()
+# - Keep only variables needed for the decomposition
+# - Coerce to primitive types
+# - Ensure the object is a plain data.frame (not tibble)
+ps2_bacon <- ps2_c[, c("id_num", "year", "ln_policies", "post")]
+ps2_bacon <- data.frame(
+  id_num      = as.integer(ps2_bacon$id_num),
+  year        = as.integer(ps2_bacon$year),
+  ln_policies = as.numeric(ps2_bacon$ln_policies),
+  post        = as.integer(ps2_bacon$post)
+)
+
+# Verify balanced panel (required by bacondecomp::bacon)
+nT_by_id <- table(ps2_bacon$id_num)
+if (length(unique(nT_by_id)) != 1) {
+  stop("Unbalanced panel detected: not all id_num have the same number of time periods.")
+}
+
+# Verify no missing values in required columns (required by bacondecomp::bacon)
+if (anyNA(ps2_bacon)) {
+  stop("Missing values detected in id_num/year/ln_policies/post; bacondecomp::bacon() requires no NAs.")
+}
+
+# Verify treatment is binary
+if (!all(ps2_bacon$post %in% c(0L, 1L))) {
+  stop("post is not binary (0/1).")
+}
+
+# Run the decomposition (can be slow; run once and save results)
+cat("Running bacondecomp::bacon() decomposition...\n")
+bacon_time <- system.time({
+  bacon_tbl <- bacondecomp::bacon(
+    formula  = ln_policies ~ post,
+    data     = ps2_bacon,
+    id_var   = "id_num",
+    time_var = "year",
+    quietly  = TRUE
+  )
+})
+cat("bacon() runtime (seconds):\n")
+print(bacon_time)
+
+# bacon_tbl is already a data.frame of 2x2 comparisons in the no-controls case
+# Add contribution for later reporting
+bacon_tbl$contribution <- bacon_tbl$estimate * bacon_tbl$weight
+
+# Save results so the decomposition never has to be recomputed
+bacon_outfile <- file.path(OUTPUT_DIR, "bacon_decomposition.rds")
+saveRDS(bacon_tbl, bacon_outfile)
+cat("Decomposition saved to:\n", bacon_outfile, "\n")
+
+# Basic summaries needed for Part (c)
+cat("\nTotal weight by comparison type:\n")
+print(aggregate(weight ~ type, data = bacon_tbl, sum))
+
+cat("\nWeighted average of component estimates (diagnostic):\n")
+weighted_avg <- sum(bacon_tbl$estimate * bacon_tbl$weight)
+print(weighted_avg)
+
+cat("\nTWFE estimate from Step C.2 (beta on post):\n")
+print(twfe_beta)
 
 ```
 
+The Goodman–Bacon decomposition successfully decomposes the TWFE DiD estimate into its underlying 2×2 comparisons. The diagnostic check confirms internal consistency: the weighted average of all component estimates exactly reproduces the TWFE coefficient of 0.1211. Most identifying variation (about 71.7%) comes from comparisons between treated and never-treated communities, which are conceptually clean and align with the canonical DiD design. However, a nontrivial share of weight (about 26%) comes from comparisons among treated units at different adoption times.
 
-## 
+In particular, approximately 10.0% of the total weight is placed on “Later vs Earlier Treated” comparisons, in which already-treated units serve as controls for later-treated units. These comparisons are precisely those emphasized in the recent staggered-adoption literature as potentially problematic when treatment effects are dynamic or heterogeneous. The presence of meaningful weight on these comparisons implies that the TWFE estimate is not solely driven by treated-versus-untreated contrasts, and may therefore partly reflect comparisons that use previously treated units as controls.
+
+
+
+## Streamlined C.3 to test (likely delete)
+
+# Goodman–Bacon decomposition of the TWFE estimate (bacondecomp)
+nm
+# Minimal input (required variables only; base data.frame; primitive types)
+
+ps2_bacon <- ps2_c[, c("id_num", "year", "ln_policies", "post")]
+ps2_bacon <- data.frame(
+id_num      = as.integer(ps2_bacon$id_num),
+year        = as.integer(ps2_bacon$year),
+ln_policies = as.numeric(ps2_bacon$ln_policies),
+post        = as.integer(ps2_bacon$post)
+)
+
+# Run decomposition (computationally intensive for this dataset)
+
+cat("Running bacondecomp::bacon() decomposition (may take several hours)...\n")
+bacon_time <- system.time({
+bacon_tbl <- bacondecomp::bacon(
+formula  = ln_policies ~ post,
+data     = ps2_bacon,
+id_var   = "id_num",
+time_var = "year",
+quietly  = TRUE
+)
+})
+cat("bacon() runtime (seconds):\n")
+print(bacon_time)
+
+# Add contribution (weight × estimate) for later reporting
+
+bacon_tbl$contribution <- bacon_tbl$estimate * bacon_tbl$weight
+
+# Save once so this step does not need to be re-run
+
+bacon_outfile <- file.path(OUTPUT_DIR, "bacon_decomposition.rds")
+saveRDS(bacon_tbl, bacon_outfile)
+cat("Decomposition saved to:\n", bacon_outfile, "\n")
+
+# Quick diagnostic: weighted average of 2x2 estimates should match TWFE coefficient (up to rounding)
+
+cat("\nWeighted average of component estimates (diagnostic):\n")
+print(sum(bacon_tbl$estimate * bacon_tbl$weight))
+
+cat("\nTWFE estimate from Step C.2 (beta on post):\n")
+print(twfe_beta)
+
+
+
+
+## Step C.4: Summarize the decomposition and quantify late-to-early comparisons
+
+This chunk loads the saved Goodman–Bacon decomposition output, summarizes weights and implied estimates by comparison type, and isolates the contribution of “Later vs Earlier Treated” comparisons.
 
 ```{r}
 
+# Step C.4: Summarize Goodman–Bacon decomposition output
 
+# Load the saved decomposition table from Step C.3
+
+bacon_infile <- file.path(OUTPUT_DIR, "bacon_decomposition.rds")
+
+if (!file.exists(bacon_infile)) {
+stop("Saved decomposition not found. Run Step C.3 to create bacon_decomposition.rds first.")
+}
+
+bacon_tbl <- readRDS(bacon_infile)
+
+# Basic checks
+
+cat("Decomposition table loaded.\n")
+cat("Rows in decomposition table:\n"); print(nrow(bacon_tbl))
+
+cat("\nTotal weight (should equal 1):\n")
+print(sum(bacon_tbl$weight, na.rm = TRUE))
+
+# Ensure contribution exists (older saved files may not include it)
+
+if (!("contribution" %in% names(bacon_tbl))) {
+bacon_tbl$contribution <- bacon_tbl$estimate * bacon_tbl$weight
+}
+
+# Summarize by comparison type:
+
+# - total_weight: total weight placed on that comparison type
+
+# - implied_estimate: weighted average estimate within that type
+
+# - total_contribution: sum(weight * estimate) = contribution to overall TWFE
+
+bacon_by_type <- bacon_tbl %>%
+group_by(type) %>%
+summarise(
+total_weight       = sum(weight, na.rm = TRUE),
+implied_estimate   = sum(estimate * weight, na.rm = TRUE) / sum(weight, na.rm = TRUE),
+total_contribution = sum(contribution, na.rm = TRUE),
+.groups = "drop"
+) %>%
+arrange(desc(total_weight))
+
+cat("\nSummary by comparison type:\n")
+print(bacon_by_type)
+
+# Pull out key types for emphasis
+
+treated_vs_untreated <- bacon_by_type %>% filter(type == "Treated vs Untreated")
+early_vs_late        <- bacon_by_type %>% filter(type == "Earlier vs Later Treated")
+late_vs_early        <- bacon_by_type %>% filter(type == "Later vs Earlier Treated")
+late_vs_always       <- bacon_by_type %>% filter(type == "Later vs Always Treated")
+
+cat("\nKey blocks (weight, implied estimate, contribution):\n")
+cat("\nTreated vs Untreated:\n"); print(treated_vs_untreated)
+cat("\nEarlier vs Later Treated:\n"); print(early_vs_late)
+cat("\nLater vs Earlier Treated (late-to-early):\n"); print(late_vs_early)
+cat("\nLater vs Always Treated:\n"); print(late_vs_always)
+
+# Verify that contributions sum to the TWFE estimate
+
+cat("\nSum of contributions across all types (should equal TWFE beta):\n")
+print(sum(bacon_by_type$total_contribution, na.rm = TRUE))
+
+cat("\nTWFE estimate from Step C.2 (beta on post):\n")
+print(twfe_beta)
+
+# Compute shares of the TWFE estimate attributable to each comparison type
+
+# (This is contribution divided by overall TWFE; can be unstable if twfe_beta is near zero.)
+
+if (!is.na(twfe_beta) && abs(twfe_beta) > 1e-8) {
+bacon_by_type <- bacon_by_type %>%
+mutate(share_of_twfe = total_contribution / twfe_beta)
+
+cat("\nShare of TWFE estimate attributable to each type (contribution / TWFE beta):\n")
+print(bacon_by_type %>% select(type, total_weight, total_contribution, share_of_twfe))
+} else {
+cat("\nNOTE: TWFE beta is near zero; shares (contribution / beta) are not reported.\n")
+}
+
+# Clean rounded table for the write-up
+
+bacon_by_type_clean <- bacon_by_type %>%
+mutate(
+total_weight       = round(total_weight, 6),
+implied_estimate   = round(implied_estimate, 6),
+total_contribution = round(total_contribution, 6),
+share_of_twfe      = if ("share_of_twfe" %in% names(bacon_by_type)) round(share_of_twfe, 6) else NA_real_
+)
+
+cat("\nRounded summary table (for write-up):\n")
+print(bacon_by_type_clean)
+
+# Save summary table to output/tables
+
+bacon_summary_outfile <- file.path(TAB_DIR, "bacon_summary_by_type.csv")
+write.csv(bacon_by_type_clean, bacon_summary_outfile, row.names = FALSE)
+cat("\nSummary table saved to:\n", bacon_summary_outfile, "\n")
 
 ```
 
+The Goodman–Bacon decomposition shows that the TWFE DiD estimate of 0.1211 is a weighted average of 306 underlying 2×2 comparisons, with weights summing to one and contributions summing exactly to the TWFE coefficient (diagnostic check passes). The largest share of identifying weight (0.717) comes from Treated vs Untreated comparisons, which imply an average effect of 0.115 and account for about 68% of the TWFE estimate. A further 0.164 of the weight comes from Earlier vs Later Treated comparisons (implied effect 0.104), contributing about 14% of the TWFE estimate.
 
-## 
+Importantly, Later vs Earlier Treated comparisons receive a nontrivial weight of 0.0998 and have a substantially larger implied estimate (0.210), contributing roughly 0.021—about 17% of the overall TWFE estimate. These “late-to-early” comparisons correspond to cases where already-treated units serve as controls for later-treated units and are precisely the comparison class emphasized in the staggered-adoption literature as potentially problematic when treatment effects are dynamic. Here, their meaningful weight and large implied effect indicate that the TWFE estimate is not driven exclusively by treated-versus-never-treated contrasts, but is partially shaped by treated-as-control comparisons.
+
+ORRRR
+
+Step C.4 adds a quantitative layer to the decomposition by showing that the potentially problematic “late-to-early” comparisons not only receive nontrivial weight (about 10%), but also imply substantially larger effects (0.210) than the clean treated-versus-untreated comparisons (0.115). This pattern is consistent with dynamic treatment effects: in the flood-insurance context, communities that experienced floods earlier have had more time to update beliefs and increase insurance take-up, so they appear much more responsive when later-treated communities are used as a comparison group. As emphasized in the staggered-adoption literature, such dynamics make treated-as-control comparisons particularly misleading. Here, they account for about 17% of the overall TWFE estimate and push it upward, suggesting that the TWFE coefficient partly reflects dynamic learning effects being mis-weighted across cohorts rather than a single, stable average treatment effect.
+
+
+## Step C.5: Final synthesis of TWFE vs Goodman–Bacon components
+
+This chunk creates a compact summary table that contrasts the overall TWFE estimate with its main Goodman–Bacon components, emphasizing the role of late-to-early comparisons.
 
 ```{r}
 
+## Step C.5: Full Goodman–Bacon decomposition table (publication-ready; no duplicate columns)
 
+# This chunk prints a complete decomposition table (all comparison types),
+# with weights summing to 1 and contributions summing to the TWFE estimate.
+# The table is formatted for an academic report (booktabs-style, serif font in HTML).
+
+library(knitr)
+library(kableExtra)
+library(dplyr)
+
+# Load the Step C.4 summary table (by comparison type)
+bacon_summary_file <- file.path(TAB_DIR, "bacon_summary_by_type.csv")
+
+if (!file.exists(bacon_summary_file)) {
+  stop("Bacon summary file not found. Run Step C.4 first.")
+}
+
+bacon_by_type <- read.csv(bacon_summary_file, stringsAsFactors = FALSE)
+
+# Keep only the expected columns (prevents duplicate/NA columns from accidental binds)
+needed_cols <- c("type", "total_weight", "implied_estimate", "total_contribution")
+if (!all(needed_cols %in% names(bacon_by_type))) {
+  stop("bacon_summary_by_type.csv does not contain the expected columns: type, total_weight, implied_estimate, total_contribution.")
+}
+bacon_by_type <- bacon_by_type[, needed_cols]
+
+# Order the comparison types in a conventional way
+type_order <- c(
+  "Treated vs Untreated",
+  "Earlier vs Later Treated",
+  "Later vs Earlier Treated",
+  "Later vs Always Treated"
+)
+
+bacon_full_tbl <- bacon_by_type %>%
+  mutate(type = factor(type, levels = type_order)) %>%
+  arrange(type) %>%
+  transmute(
+    `Comparison type`       = as.character(type),
+    `Implied 2x2 estimate`  = as.numeric(implied_estimate),
+    `Weight`                = as.numeric(total_weight),
+    `Contribution`          = as.numeric(total_contribution)
+  )
+
+# Add a "Total" row (weights sum to 1; contribution equals TWFE beta)
+total_row <- data.frame(
+  `Comparison type`      = "Total",
+  `Implied 2x2 estimate` = NA_real_,
+  `Weight`               = sum(bacon_full_tbl$Weight, na.rm = TRUE),
+  `Contribution`         = sum(bacon_full_tbl$Contribution, na.rm = TRUE),
+  check.names = FALSE
+)
+
+# Add a TWFE reference row (weight is not a decomposition weight, so leave as NA)
+twfe_row <- data.frame(
+  `Comparison type`      = "TWFE (overall)",
+  `Implied 2x2 estimate` = as.numeric(twfe_beta),
+  `Weight`               = NA_real_,
+  `Contribution`         = as.numeric(twfe_beta),
+  check.names = FALSE
+)
+
+bacon_full_tbl <- bind_rows(twfe_row, bacon_full_tbl, total_row)
+
+# Format numbers for display (remove NA text; show em dash instead)
+fmt_num <- function(x, digits = 4) {
+  ifelse(is.na(x), "\u2014", sprintf(paste0("%.", digits, "f"), x))
+}
+
+bacon_full_tbl_pretty <- bacon_full_tbl %>%
+  mutate(
+    `Implied 2x2 estimate` = fmt_num(`Implied 2x2 estimate`, 4),
+    `Weight`               = fmt_num(`Weight`, 4),
+    `Contribution`         = fmt_num(`Contribution`, 4)
+  )
+
+# Save a clean CSV (numeric) for reproducibility / appendix use
+bacon_full_outfile <- file.path(TAB_DIR, "bacon_full_table.csv")
+write.csv(bacon_full_tbl, bacon_full_outfile, row.names = FALSE)
+cat("\nFull Bacon decomposition table saved to:\n", bacon_full_outfile, "\n")
+
+# Print publication-ready table in the knitted report
+kable(
+  bacon_full_tbl_pretty,
+  caption  = "Goodman–Bacon Decomposition of the TWFE Estimate",
+  align    = c("l", "c", "c", "c"),
+  booktabs = TRUE
+) %>%
+  kable_styling(
+    font_size  = 11,
+    position   = "center",
+    full_width = FALSE,
+    latex_options = c("hold_position")
+  ) %>%
+  row_spec(0, bold = TRUE) %>%
+  # Bold the TWFE and Total rows
+  row_spec(which(bacon_full_tbl$`Comparison type` %in% c("TWFE (overall)", "Total")), bold = TRUE) %>%
+  # Emphasize late-to-early comparisons
+  row_spec(which(bacon_full_tbl$`Comparison type` == "Later vs Earlier Treated"), bold = TRUE) %>%
+  column_spec(1, width = "7cm") %>%
+  kable_classic(full_width = FALSE, html_font = "Times New Roman")
 
 ```
 
+## Final Interpretation of Part c)
 
-## 
+Recent work on staggered difference-in-differences designs shows that two-way fixed effects (TWFE) and event-study estimators can produce misleading estimates when treatment timing is staggered and treatment effects are dynamic. As emphasized by Baker et al. (2022), the TWFE estimand is generally a weighted average of heterogeneous 2×2 comparisons, including comparisons that use already-treated units as controls for later-treated units. When treatment effects evolve over time—as is plausible in Gallagher’s (2014) setting, where households update beliefs about flood risk after experiencing a flood—such “treated-as-control” comparisons need not recover a meaningful average treatment effect on the treated (ATT).
 
-```{r}
+The Goodman–Bacon decomposition reported in Table X shows that about 71.7% of the identifying weight in the TWFE estimate comes from clean comparisons between treated and never-treated communities, which imply an average effect of 0.1147. However, a nontrivial share of weight is placed on comparisons among treated cohorts. In particular, “late-to-early” comparisons—where later-treated units are compared to already-treated units—receive about 9.98% of the total weight and imply an ATT of 0.2102 (Table X). This estimate is substantially larger than the effect implied by treated-versus-untreated comparisons, consistent with the presence of dynamic treatment effects that grow with time since treatment.
 
-
-
-```
-
-
-## 
-
-```{r}
-
-
-
-```
-
-
-## 
-
-```{r}
-
-
-
-```
+As shown in Table X, late-to-early comparisons contribute approximately 0.0210 to the overall TWFE estimate of 0.1211, accounting for roughly 17% of the aggregate effect. Thus, a meaningful portion of the TWFE estimate is driven by treated-as-control comparisons that are precisely those highlighted in the recent literature as potentially problematic under staggered adoption with dynamic effects. In the context of flood-insurance take-up, this suggests that Gallagher’s TWFE/event-study estimates partly reflect dynamic learning effects being re-weighted across cohorts, rather than a single stable ATT, and should therefore be interpreted with caution.
 
 
 ## 

@@ -1,0 +1,4 @@
+"component","estimate","weight","contribution"
+"TWFE (overall)",0.1211,1,0.1211
+"Treated vs Untreated (clean)",0.1147,0.7172,0.0823
+"Later vs Earlier Treated (late-to-early)",0.2102,0.0998,0.021
