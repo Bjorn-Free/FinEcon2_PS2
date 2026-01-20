@@ -570,7 +570,7 @@ es_plot <- ggplot(es_plot_data, aes(x = rel_year, y = estimate)) +
   labs(
     x = "Years relative to flood",
     y = "Effect on log policies (relative to year before flood)",
-    title = "Event Study: Flood and Insurance Take-Up"
+    title = "Figure 1. Event Study: Flood and Insurance Take-Up"
   ) +
   theme_minimal(base_family = "serif") +
   theme(
@@ -995,7 +995,7 @@ cat("\nFull Bacon decomposition table saved to:\n", bacon_full_outfile, "\n")
 # Print publication-ready table in the knitted report
 kable(
   bacon_full_tbl_pretty,
-  caption  = "Goodman–Bacon Decomposition of the TWFE Estimate",
+  caption  = "Table 1. Goodman–Bacon Decomposition of the TWFE Estimate",
   align    = c("l", "c", "c", "c"),
   booktabs = TRUE
 ) %>%
@@ -1202,7 +1202,7 @@ print(summary(es_imp))
 ```
 
 
-Step D.6: Publication-ready imputation event-study plot (−6 to +9 window)
+## Step D.6: Publication-ready imputation event-study plot (−6 to +9 window)
 
 This chunk produces a report-ready imputation-based event-study figure, restricting the displayed event-time window to −6 through +9 for a clean and defensible presentation.
 
@@ -1211,52 +1211,46 @@ This chunk produces a report-ready imputation-based event-study figure, restrict
 # Tidy event-time coefficients from the imputation event-study regression
 
 es_imp_plot_data <- broom::tidy(es_imp) %>%
-filter(grepl("^rel_year::", term)) %>%
-mutate(
-rel_year = as.integer(gsub("rel_year::", "", term)),
-ci_low   = estimate - 1.96 * std.error,
-ci_high  = estimate + 1.96 * std.error
-) %>%
-arrange(rel_year) %>%
-
-# Restrict to the defensible window: -6 to +9
-
-filter(rel_year >= -6, rel_year <= 9)
+  filter(grepl("^rel_year::", term)) %>%
+  mutate(
+    rel_year = as.integer(gsub("rel_year::", "", term)),
+    ci_low   = estimate - 1.96 * std.error,
+    ci_high  = estimate + 1.96 * std.error
+  ) %>%
+  arrange(rel_year) %>%
+  # Restrict to the defensible window: -6 to +9
+  filter(rel_year >= -6, rel_year <= 9)
 
 # Print for a quick check
-
 cat("Imputation event-study plotting data (restricted to -6 to +9):\n")
 print(es_imp_plot_data)
 
 # Build the publication-ready plot (serif = Times-like)
-
 library(ggplot2)
 
 es_imp_plot <- ggplot(es_imp_plot_data, aes(x = rel_year, y = estimate)) +
-geom_hline(yintercept = 0, linetype = "dashed") +
-geom_vline(xintercept = 0, linetype = "dotted") +
-geom_point(size = 2) +
-geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
-scale_x_continuous(breaks = seq(-6, 9, by = 1)) +
-labs(
-x = "Years relative to flood",
-y = "Imputed treatment effect on log policies",
-title = "Dynamic Effects of Flood Experience on Insurance Take-Up",
-subtitle = "Imputation-based event study (Borusyak et al. method)"
-) +
-theme_minimal(base_family = "serif") +
-theme(
-plot.title = element_text(face = "bold"),
-axis.title = element_text(face = "bold"),
-panel.grid.minor = element_blank()
-)
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_point(size = 2) +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
+  scale_x_continuous(breaks = seq(-6, 9, by = 1)) +
+  labs(
+    x = "Years relative to flood",
+    y = "Imputed treatment effect on log policies",
+    title = "Figure 2. Dynamic Effects of Flood Experience on Insurance Take-Up",
+    subtitle = "Imputation-based event study (Borusyak et al. method)"
+  ) +
+  theme_minimal(base_family = "serif") +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    panel.grid.minor = element_blank()
+  )
 
 # Display the plot
-
 print(es_imp_plot)
 
 # Save high-resolution version for report
-
 plot_file <- file.path(FIG_DIR, "event_study_imputation_serif_m6_p9.png")
 ggsave(plot_file, es_imp_plot, width = 7, height = 5, dpi = 300)
 
@@ -1264,7 +1258,7 @@ cat("Imputation event-study figure saved to:\n", plot_file, "\n")
 
 ```
 
-## PArt d) final interpretation
+## Part d) final interpretation
 
 The imputation estimator of Borusyak et al. (2024) is implemented to address the biases that arise in two-way fixed effects models with staggered treatment timing. Using only untreated observations (never-treated units and pre-flood periods of treated units), a model of the form
 Y_it = lambda_i + gamma_t + error_it
@@ -1359,8 +1353,6 @@ This chunk formats the ATT estimates and standard errors into a publication-read
 
 ```{r}
 
-## Step E.3: Publication-ready ATT comparison table
-
 library(knitr)
 library(kableExtra)
 library(dplyr)
@@ -1391,7 +1383,7 @@ cat("\nATT comparison table saved to:\n", att_outfile, "\n")
 # Print publication-ready table in the knitted report (matching earlier style)
 kable(
   att_tbl_pretty,
-  caption  = "ATT comparison: hand imputation versus did_imputation",
+  caption  = "Table 2. ATT: Hand vs Package Imputation",
   align    = c("l", "c", "c"),
   booktabs = TRUE
 ) %>%
@@ -1402,7 +1394,6 @@ kable(
     latex_options = c("hold_position")
   ) %>%
   row_spec(0, bold = TRUE) %>%
-  # Emphasize the package row (valid inference)
   row_spec(which(att_tbl$Method == "did_imputation (correct SE)"), bold = TRUE) %>%
   column_spec(1, width = "7cm") %>%
   kable_classic(full_width = FALSE, html_font = "Times New Roman")
