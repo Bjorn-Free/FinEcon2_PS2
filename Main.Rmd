@@ -545,45 +545,44 @@ This chunk extracts the event-time coefficients from the regression, constructs 
 ```{r}
 
 # Tidy event-time coefficients from the Gallagher-style regression
-
 es_plot_data <- broom::tidy(es_gallagher) %>%
-filter(grepl("rel_year_f", term)) %>%
-mutate(
-rel_year = as.integer(stringr::str_extract(term, "-?\\d+"))
-ci_low   = estimate - 1.96 * std.error,
-ci_high  = estimate + 1.96 * std.error
-) %>%
-arrange(rel_year)
+  filter(grepl("rel_year_f", term)) %>%
+  mutate(
+    rel_year = as.integer(stringr::str_extract(term, "-?\\d+")),
+    ci_low   = estimate - 1.96 * std.error,
+    ci_high  = estimate + 1.96 * std.error
+  ) %>%
+  arrange(rel_year) %>%
+  # Restrict to the defensible window: -6 to +9
+  filter(rel_year >= -6, rel_year <= 9)
 
 # Print for a quick check
-
-cat("Event-study plotting data:\n")
+cat("Event-study plotting data (restricted to -6 to +9):\n")
 print(es_plot_data)
 
 # Build the event-study plot (serif = Times New Roman on Windows)
-
 es_plot <- ggplot(es_plot_data, aes(x = rel_year, y = estimate)) +
-geom_hline(yintercept = 0, linetype = "dashed") +
-geom_point() +
-geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
-labs(
-x = "Years relative to flood",
-y = "Effect on log policies (relative to year before flood)",
-title = "Event Study: Flood and Insurance Take-Up"
-) +
-theme_minimal(base_family = "serif") +
-theme(
-plot.title = element_text(face = "bold"),
-axis.title = element_text(face = "bold")
-)
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = 0, linetype = "dotted") +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
+  scale_x_continuous(breaks = seq(-6, 9, by = 1)) +
+  labs(
+    x = "Years relative to flood",
+    y = "Effect on log policies (relative to year before flood)",
+    title = "Event Study: Flood and Insurance Take-Up"
+  ) +
+  theme_minimal(base_family = "serif") +
+  theme(
+    plot.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold")
+  )
 
 # Display the plot
-
 print(es_plot)
 
 # Save the plot
-
-plot_file <- file.path(FIG_DIR, "event_study_gallagher_style_serif.png")
+plot_file <- file.path(FIG_DIR, "event_study_gallagher_style_serif_m6_p9.png")
 ggsave(plot_file, es_plot, width = 7, height = 5, dpi = 300)
 
 cat("Event-study figure saved to:\n", plot_file, "\n")
@@ -1025,55 +1024,455 @@ The Goodman–Bacon decomposition reported in Table X shows that about 71.7% of 
 As shown in Table X, late-to-early comparisons contribute approximately 0.0210 to the overall TWFE estimate of 0.1211, accounting for roughly 17% of the aggregate effect. Thus, a meaningful portion of the TWFE estimate is driven by treated-as-control comparisons that are precisely those highlighted in the recent literature as potentially problematic under staggered adoption with dynamic effects. In the context of flood-insurance take-up, this suggests that Gallagher’s TWFE/event-study estimates partly reflect dynamic learning effects being re-weighted across cohorts, rather than a single stable ATT, and should therefore be interpreted with caution.
 
 
-## 
+## Part (d): Addressing staggered DiD bias using the Borusyak et al. imputation estimator
+
+This section implements the imputation estimator of Borusyak et al. (2024) to resolve the identification problems of TWFE under staggered treatment timing documented in Part (c). The approach proceeds by (i) estimating unit and time fixed effects using only untreated observations, (ii) imputing untreated potential outcomes for treated observations and constructing observation-level treatment effects, and (iii) using these imputed effects to build an event-study that traces the dynamic impact of flood experience without relying on already-treated units as controls.
+
+## Step D.1: Construct flood timing, treatment status, and imputation sample indicators
+
+This chunk constructs the unit-level flood timing variable (flood_year) from the flood-year indicator (hityear), then defines the time-varying treatment indicator (treated_it) and the untreated/treated observation flags (Ω₀ and Ω₁) used in Steps (1)–(3).
 
 ```{r}
 
+# Construct unit-level flood timing (flood_year) and then define treated_it and Ω0/Ω1 at the observation level
+
+ps2 <- ps2 %>%
+group_by(id_num) %>%
+mutate(
+# Flood year: the (unique) year in which hityear == 1 for the community; NA if never flooded
+flood_year = ifelse(any(hityear == 1L), year[hityear == 1L][1], NA_integer_),
+
+# Time-varying treatment indicator: treated in and after the flood year
+treated_it = ifelse(!is.na(flood_year) & year >= flood_year, 1L, 0L),
+
+# Unit ever treated (has a flood at some point in the sample)
+ever_treated = ifelse(!is.na(flood_year), 1L, 0L),
+
+# Ω0: untreated observations (never-treated units and pre-treatment periods)
+in_omega0 = ifelse(treated_it == 0L, 1L, 0L),
+
+# Ω1: treated observations (post-treatment periods for treated units)
+in_omega1 = ifelse(treated_it == 1L, 1L, 0L)
+
+) %>%
+ungroup()
+
+# Explicit sanity checks
+
+cat("Sanity check A: Flood events per community (should be 0 or 1 only)\n")
+flood_counts <- ps2 %>%
+group_by(id_num) %>%
+summarise(n_flood_years = sum(hityear == 1L), .groups = "drop")
+print(table(flood_counts$n_flood_years))
+
+cat("\nSanity check B: flood_year missingness (NA means never flooded)\n")
+print(table(is.na(ps2$flood_year)))
+
+cat("\nSanity check C: Every observation classified as either Ω0 or Ω1 (should be all 1s)\n")
+print(table(ps2$in_omega0 + ps2$in_omega1))
+
+cat("\nSanity check D: treated_it takes only values 0 or 1\n")
+print(table(ps2$treated_it))
+
+cat("\nSanity check E: treated_it equals Ω1 by construction (cross-tab)\n")
+print(table(treated_it = ps2$treated_it, in_omega1 = ps2$in_omega1))
+
+```
+
+
+## Step D.2: Estimate fixed effects using only untreated observations
+
+This chunk estimates the unit and time fixed effects using only untreated observations (Ω₀), which will later be used to impute untreated potential outcomes for treated observations.
+
+```{r}
+
+# Estimate unit and time fixed effects using only untreated observations (Ω0)
+
+fe_untreated <- feols(
+ln_policies ~ 1 | id_num + year,
+data = ps2 %>% filter(in_omega0 == 1)
+)
+
+# Extract estimated fixed effects
+
+lambda_hat <- fixef(fe_untreated)$id_num
+gamma_hat  <- fixef(fe_untreated)$year
+
+# Merge fixed effects back into the main dataset
+
+ps2 <- ps2 %>%
+mutate(
+lambda_hat = lambda_hat[as.character(id_num)],
+gamma_hat  = gamma_hat[as.character(year)]
+)
+
+# Basic check
+
+cat("Fixed effects successfully merged:\n")
+cat("Missing lambda_hat:", sum(is.na(ps2$lambda_hat)), "\n")
+cat("Missing gamma_hat:", sum(is.na(ps2$gamma_hat)), "\n")
+
+```
+
+
+## Step D.3: Impute untreated potential outcomes and treatment effects
+
+This chunk constructs the imputed untreated potential outcome Y0_hat_it = lambda_hat_i + gamma_hat_t, and then computes the imputed treatment effect tau_hat_it = Y_it − Y0_hat_it.
+
+```{r}
+
+# Construct imputed untreated potential outcomes and treatment effects
+
+ps2 <- ps2 %>%
+mutate(
+y0_hat = lambda_hat + gamma_hat,
+tau_hat = ln_policies - y0_hat
+)
+
+# Keep treated observations for treatment-effect analysis
+
+tau_data <- ps2 %>% filter(in_omega1 == 1)
+
+# Sanity checks
+
+cat("Sanity check A: Missing imputed values among treated observations\n")
+cat("Missing y0_hat:", sum(is.na(tau_data$y0_hat)), "\n")
+cat("Missing tau_hat:", sum(is.na(tau_data$tau_hat)), "\n")
+
+cat("\nSanity check B: Summary of imputed treatment effects (treated obs only)\n")
+print(summary(tau_data$tau_hat))
+
+```
+
+
+## Step D.4: Construct event time for treated observations
+
+This chunk constructs relative (event) time for treated observations, which will be used to build the imputation-based event-study.
+
+```{r}
+
+# Construct event time for treated observations
+
+tau_data <- tau_data %>%
+mutate(
+rel_year = year - flood_year
+)
+
+# Sanity checks for event time
+
+cat("Sanity check A: Distribution of relative years (treated obs only)\n")
+print(summary(tau_data$rel_year))
+
+cat("\nSanity check B: Frequency table of relative years (first few values)\n")
+print(head(sort(table(tau_data$rel_year)), 10))
+
+```
+
+
+## Step D.5: Imputation-based event-study regression
+
+This chunk estimates the dynamic treatment effects by regressing the imputed treatment effects (tau_hat) on relative-time indicators, normalizing event time −1 as the reference period (implemented by including Ω₀ in the regression with tau_hat = 0 for untreated observations).
+
+```{r}
+
+# Prepare event-study dataset: set tau_hat = 0 for Ω0 and keep imputed tau_hat for Ω1
+
+es_data <- ps2 %>%
+mutate(
+rel_year = year - flood_year,
+tau_es = ifelse(in_omega1 == 1, tau_hat, 0)
+) %>%
+filter(!is.na(rel_year)) %>%      # drops never-treated units (no event time)
+filter(!is.na(tau_es))            # drops units with missing imputation (no lambda_hat)
+
+# Run imputation-based event study (normalize to rel_year = -1)
+
+es_imp <- feols(
+tau_es ~ i(rel_year, ref = -1),
+data = es_data,
+cluster = ~ id_num
+)
+
+# Quick output
+
+cat("Imputation-based event-study regression complete.\n")
+print(summary(es_imp))
 
 
 ```
 
 
-## 
+Step D.6: Publication-ready imputation event-study plot (−6 to +9 window)
+
+This chunk produces a report-ready imputation-based event-study figure, restricting the displayed event-time window to −6 through +9 for a clean and defensible presentation.
 
 ```{r}
 
+# Tidy event-time coefficients from the imputation event-study regression
+
+es_imp_plot_data <- broom::tidy(es_imp) %>%
+filter(grepl("^rel_year::", term)) %>%
+mutate(
+rel_year = as.integer(gsub("rel_year::", "", term)),
+ci_low   = estimate - 1.96 * std.error,
+ci_high  = estimate + 1.96 * std.error
+) %>%
+arrange(rel_year) %>%
+
+# Restrict to the defensible window: -6 to +9
+
+filter(rel_year >= -6, rel_year <= 9)
+
+# Print for a quick check
+
+cat("Imputation event-study plotting data (restricted to -6 to +9):\n")
+print(es_imp_plot_data)
+
+# Build the publication-ready plot (serif = Times-like)
+
+library(ggplot2)
+
+es_imp_plot <- ggplot(es_imp_plot_data, aes(x = rel_year, y = estimate)) +
+geom_hline(yintercept = 0, linetype = "dashed") +
+geom_vline(xintercept = 0, linetype = "dotted") +
+geom_point(size = 2) +
+geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
+scale_x_continuous(breaks = seq(-6, 9, by = 1)) +
+labs(
+x = "Years relative to flood",
+y = "Imputed treatment effect on log policies",
+title = "Dynamic Effects of Flood Experience on Insurance Take-Up",
+subtitle = "Imputation-based event study (Borusyak et al. method)"
+) +
+theme_minimal(base_family = "serif") +
+theme(
+plot.title = element_text(face = "bold"),
+axis.title = element_text(face = "bold"),
+panel.grid.minor = element_blank()
+)
+
+# Display the plot
+
+print(es_imp_plot)
+
+# Save high-resolution version for report
+
+plot_file <- file.path(FIG_DIR, "event_study_imputation_serif_m6_p9.png")
+ggsave(plot_file, es_imp_plot, width = 7, height = 5, dpi = 300)
+
+cat("Imputation event-study figure saved to:\n", plot_file, "\n")
+
+```
+
+## PArt d) final interpretation
+
+The imputation estimator of Borusyak et al. (2024) is implemented to address the biases that arise in two-way fixed effects models with staggered treatment timing. Using only untreated observations (never-treated units and pre-flood periods of treated units), a model of the form
+Y_it = lambda_i + gamma_t + error_it
+is first estimated. These estimates are then used to impute untreated potential outcomes for treated observations as
+Y0_hat_it = lambda_hat_i + gamma_hat_t,
+and treatment effects are constructed as
+tau_hat_it = Y_it − Y0_hat_it.
+This procedure ensures that treatment effects are identified only from comparisons with untreated observations, thereby avoiding the “already-treated as control” problem discussed in Part (c).
+
+Figure Y reports the event-study coefficients obtained by regressing the imputed treatment effects on relative-time indicators. The figure shows a sharp and statistically significant increase in insurance take-up in the flood year, followed by a peak in the first one to two years after the flood. The effect then declines gradually over subsequent years and approaches zero at longer horizons. Pre-treatment coefficients are essentially zero, reflecting the construction of the estimator and supporting the absence of differential pre-trends.
+
+Compared with the standard TWFE event study, the imputation-based results in Figure Y display a similar qualitative pattern—an immediate spike followed by gradual decay—but with a cleaner dynamic profile at longer horizons. By eliminating comparisons that use already-treated units as controls, the imputation estimator removes the problematic weighting documented in Part (c). The results therefore confirm Gallagher’s substantive conclusion that flood experience temporarily raises perceived risk, as proxied by insurance take-up, while demonstrating that this conclusion is robust to using an estimator designed for staggered treatment timing.
+
+
+## Part (e): Comparing ATT estimates and inference under imputation
+
+This section compares the average treatment effect on the treated (ATT) obtained from the “by hand” imputation approach with the ATT produced by the did_imputation package. The workflow proceeds by (i) aggregating the imputed treatment effects to obtain the ATT using a simple regression/mean, (ii) estimating the same estimand using the package implementation of the imputation estimator, and (iii) contrasting the resulting point estimates and standard errors to illustrate why naive standard errors from the hand-constructed approach are incorrect and how proper inference must account for first-stage estimation uncertainty.
+
+## Step E.1: Estimate ATT from the “by hand” imputation approach (naive SE)
+
+This chunk estimates the ATT implied by the hand-constructed imputation effects by regressing the imputation-based treatment effect variable on the treatment indicator; the coefficient equals the mean imputed effect among treated observations.
+
+```{r}
+
+# Build the analysis variable used for the ATT regression:
+
+# tau_es = tau_hat for treated observations, and 0 for untreated observations
+
+att_data <- ps2 %>%
+mutate(
+tau_es = ifelse(in_omega1 == 1, tau_hat, 0)
+) %>%
+
+# drop observations where tau_hat is missing (these units never appear untreated in Ω0)
+
+filter(!is.na(tau_es))
+
+# ATT via regression (equivalent to mean(tau_hat | treated))
+
+att_hand <- feols(
+tau_es ~ treated_it,
+data = att_data,
+cluster = ~ id_num
+)
+
+cat("Hand (by-construction) imputation ATT estimate:\n")
+print(summary(att_hand))
+
+# Cross-check: direct mean of tau_hat among treated observations (non-missing only)
+
+att_mean <- att_data %>%
+filter(treated_it == 1) %>%
+summarise(att = mean(tau_es), n = n())
+
+cat("\nCross-check (mean of tau_es among treated observations):\n")
+print(att_mean)
+
+```
+
+
+## Step E.2: Estimate ATT using the didimputation package
+
+This chunk estimates the ATT using the did_imputation() function from the didimputation package, using the same first-stage specification (unit and year fixed effects) and clustering at the community level.
+
+```{r}
+
+# Load package (install once if needed)
+
+# install.packages("didimputation")
+
+library(didimputation)
+
+att_pkg <- did_imputation(
+data = ps2,
+yname = "ln_policies",
+gname = "flood_year",                 # treatment start year (NA for never-treated is allowed)
+tname = "year",
+idname = "id_num",
+first_stage = ~ 1 | id_num + year,    # match Step D.2
+cluster_var = "id_num"                # default is idname, but kept explicit
+)
+
+cat("Package did_imputation ATT estimate:\n")
+print(att_pkg)
+
+```
+
+
+## Step E.3: Professional ATT comparison table for the report
+
+This chunk formats the ATT estimates and standard errors into a publication-ready table and saves it as both HTML and LaTeX (choose whichever matches your final output format).
+
+```{r}
+
+## Step E.3: Publication-ready ATT comparison table
+
+library(knitr)
+library(kableExtra)
+library(dplyr)
+
+# Build a clean numeric table first (safe column names)
+att_tbl <- data.frame(
+  Method    = c("Hand imputation (naive SE)", "did_imputation (correct SE)"),
+  ATT       = c(as.numeric(hand_est), as.numeric(pkg_est)),
+  Std_Error = c(as.numeric(hand_se),  as.numeric(pkg_se)),
+  check.names = FALSE
+)
+
+# Format numbers for display
+fmt_num <- function(x, digits = 4) sprintf(paste0("%.", digits, "f"), x)
+
+att_tbl_pretty <- att_tbl %>%
+  mutate(
+    ATT       = fmt_num(ATT, 4),
+    Std_Error = fmt_num(Std_Error, 4)
+  ) %>%
+  rename(`Std. Error` = Std_Error)
+
+# Save a clean CSV (numeric) for reproducibility / appendix use
+att_outfile <- file.path(TAB_DIR, "att_comparison_table.csv")
+write.csv(att_tbl, att_outfile, row.names = FALSE)
+cat("\nATT comparison table saved to:\n", att_outfile, "\n")
+
+# Print publication-ready table in the knitted report (matching earlier style)
+kable(
+  att_tbl_pretty,
+  caption  = "ATT comparison: hand imputation versus did_imputation",
+  align    = c("l", "c", "c"),
+  booktabs = TRUE
+) %>%
+  kable_styling(
+    font_size  = 11,
+    position   = "center",
+    full_width = FALSE,
+    latex_options = c("hold_position")
+  ) %>%
+  row_spec(0, bold = TRUE) %>%
+  # Emphasize the package row (valid inference)
+  row_spec(which(att_tbl$Method == "did_imputation (correct SE)"), bold = TRUE) %>%
+  column_spec(1, width = "7cm") %>%
+  kable_classic(full_width = FALSE, html_font = "Times New Roman")
+
+```
+
+## Part e) Final Interpretation
+
+Table Z reports the average treatment effect on the treated (ATT) estimated using both the hand implementation of the imputation estimator and the did_imputation package. Both methods produce the same point estimate (ATT = 0.0917), which confirms that they implement the same imputation logic: untreated outcomes are first estimated using only untreated observations, and treatment effects are then constructed as tau_hat_it = Y_it − Y0_hat_it. This equivalence of point estimates is exactly what is predicted by the imputation framework of Borusyak et al. (2024) and by the exposition in Roth et al. (2023).
+
+The difference appears in the standard errors. The hand implementation reports a smaller standard error (0.0134) because it treats the imputed components as known and ignores uncertainty from the first-stage estimation. The did_imputation package reports a larger standard error (0.0144) because it accounts for the imputation step and the resulting dependence structure, as required by Borusyak et al. (2024). Roth et al. (2023) warn that naive second-stage regressions on imputed effects lead to invalid inference, and Baker et al. (2022) emphasize that correcting staggered-adoption bias requires both correct point estimation and correct inference. Therefore, the package-based standard error is the appropriate one for inference.
+
+
+```{r}
 
 
 ```
 
 
-## 
+
 
 ```{r}
-
 
 
 ```
 
 
-## 
+
 
 ```{r}
-
 
 
 ```
 
 
-## 
+
 
 ```{r}
-
 
 
 ```
 
 
-## 
+
 
 ```{r}
 
+
+```
+
+
+
+
+```{r}
+
+
+```
+
+
+
+
+```{r}
+
+
+```
+
+
+
+
+```{r}
 
 
 ```
