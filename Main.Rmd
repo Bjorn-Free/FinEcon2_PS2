@@ -42,7 +42,7 @@ This chunk installs (if needed) and loads the libraries used in PS2 (event study
 
 # Make installs non-interactive and consistent
 
-options(repos = c(CRAN = "[https://cloud.r-project.org](https://cloud.r-project.org)"))
+options(repos = c(CRAN = "https://cloud.r-project.org"))
 
 # Package list for this project (based on PS2 requirements)
 
@@ -549,7 +549,7 @@ This chunk extracts the event-time coefficients from the regression, constructs 
 es_plot_data <- broom::tidy(es_gallagher) %>%
 filter(grepl("rel_year_f", term)) %>%
 mutate(
-rel_year = as.integer(gsub("rel_year_f::|:treated", "", term)),
+rel_year = as.integer(stringr::str_extract(term, "-?\\d+"))
 ci_low   = estimate - 1.96 * std.error,
 ci_high  = estimate + 1.96 * std.error
 ) %>%
@@ -798,57 +798,6 @@ The Goodman–Bacon decomposition successfully decomposes the TWFE DiD estimate 
 In particular, approximately 10.0% of the total weight is placed on “Later vs Earlier Treated” comparisons, in which already-treated units serve as controls for later-treated units. These comparisons are precisely those emphasized in the recent staggered-adoption literature as potentially problematic when treatment effects are dynamic or heterogeneous. The presence of meaningful weight on these comparisons implies that the TWFE estimate is not solely driven by treated-versus-untreated contrasts, and may therefore partly reflect comparisons that use previously treated units as controls.
 
 
-
-## Streamlined C.3 to test (likely delete)
-
-# Goodman–Bacon decomposition of the TWFE estimate (bacondecomp)
-nm
-# Minimal input (required variables only; base data.frame; primitive types)
-
-ps2_bacon <- ps2_c[, c("id_num", "year", "ln_policies", "post")]
-ps2_bacon <- data.frame(
-id_num      = as.integer(ps2_bacon$id_num),
-year        = as.integer(ps2_bacon$year),
-ln_policies = as.numeric(ps2_bacon$ln_policies),
-post        = as.integer(ps2_bacon$post)
-)
-
-# Run decomposition (computationally intensive for this dataset)
-
-cat("Running bacondecomp::bacon() decomposition (may take several hours)...\n")
-bacon_time <- system.time({
-bacon_tbl <- bacondecomp::bacon(
-formula  = ln_policies ~ post,
-data     = ps2_bacon,
-id_var   = "id_num",
-time_var = "year",
-quietly  = TRUE
-)
-})
-cat("bacon() runtime (seconds):\n")
-print(bacon_time)
-
-# Add contribution (weight × estimate) for later reporting
-
-bacon_tbl$contribution <- bacon_tbl$estimate * bacon_tbl$weight
-
-# Save once so this step does not need to be re-run
-
-bacon_outfile <- file.path(OUTPUT_DIR, "bacon_decomposition.rds")
-saveRDS(bacon_tbl, bacon_outfile)
-cat("Decomposition saved to:\n", bacon_outfile, "\n")
-
-# Quick diagnostic: weighted average of 2x2 estimates should match TWFE coefficient (up to rounding)
-
-cat("\nWeighted average of component estimates (diagnostic):\n")
-print(sum(bacon_tbl$estimate * bacon_tbl$weight))
-
-cat("\nTWFE estimate from Step C.2 (beta on post):\n")
-print(twfe_beta)
-
-
-
-
 ## Step C.4: Summarize the decomposition and quantify late-to-early comparisons
 
 This chunk loads the saved Goodman–Bacon decomposition output, summarizes weights and implied estimates by comparison type, and isolates the contribution of “Later vs Earlier Treated” comparisons.
@@ -958,26 +907,16 @@ cat("\nSummary table saved to:\n", bacon_summary_outfile, "\n")
 
 ```
 
-The Goodman–Bacon decomposition shows that the TWFE DiD estimate of 0.1211 is a weighted average of 306 underlying 2×2 comparisons, with weights summing to one and contributions summing exactly to the TWFE coefficient (diagnostic check passes). The largest share of identifying weight (0.717) comes from Treated vs Untreated comparisons, which imply an average effect of 0.115 and account for about 68% of the TWFE estimate. A further 0.164 of the weight comes from Earlier vs Later Treated comparisons (implied effect 0.104), contributing about 14% of the TWFE estimate.
-
-Importantly, Later vs Earlier Treated comparisons receive a nontrivial weight of 0.0998 and have a substantially larger implied estimate (0.210), contributing roughly 0.021—about 17% of the overall TWFE estimate. These “late-to-early” comparisons correspond to cases where already-treated units serve as controls for later-treated units and are precisely the comparison class emphasized in the staggered-adoption literature as potentially problematic when treatment effects are dynamic. Here, their meaningful weight and large implied effect indicate that the TWFE estimate is not driven exclusively by treated-versus-never-treated contrasts, but is partially shaped by treated-as-control comparisons.
-
-ORRRR
-
 Step C.4 adds a quantitative layer to the decomposition by showing that the potentially problematic “late-to-early” comparisons not only receive nontrivial weight (about 10%), but also imply substantially larger effects (0.210) than the clean treated-versus-untreated comparisons (0.115). This pattern is consistent with dynamic treatment effects: in the flood-insurance context, communities that experienced floods earlier have had more time to update beliefs and increase insurance take-up, so they appear much more responsive when later-treated communities are used as a comparison group. As emphasized in the staggered-adoption literature, such dynamics make treated-as-control comparisons particularly misleading. Here, they account for about 17% of the overall TWFE estimate and push it upward, suggesting that the TWFE coefficient partly reflects dynamic learning effects being mis-weighted across cohorts rather than a single, stable average treatment effect.
 
 
 ## Step C.5: Final synthesis of TWFE vs Goodman–Bacon components
 
-This chunk creates a compact summary table that contrasts the overall TWFE estimate with its main Goodman–Bacon components, emphasizing the role of late-to-early comparisons.
+This chunk constructs a concise summary table that contrasts the overall TWFE estimate with its main Goodman–Bacon components, showing how different treatment-timing comparisons are weighted and how they shape (or distort) the aggregate TWFE estimate.
 
 ```{r}
 
-## Step C.5: Full Goodman–Bacon decomposition table (publication-ready; no duplicate columns)
-
-# This chunk prints a complete decomposition table (all comparison types),
-# with weights summing to 1 and contributions summing to the TWFE estimate.
-# The table is formatted for an academic report (booktabs-style, serif font in HTML).
+# This chunk prints a complete decomposition table (all comparison types), with weights summing to 1 and contributions summing to the TWFE estimate.
 
 library(knitr)
 library(kableExtra)
